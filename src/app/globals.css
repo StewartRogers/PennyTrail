@@ -1,0 +1,48 @@
+@import "tailwindcss";
+
+:root {
+  --bg: oklch(0.985 0.003 260);
+  --panel: #ffffff;
+  --border: oklch(0.9 0.006 260);
+  --text: oklch(0.22 0.01 260);
+  --muted: oklch(0.52 0.01 260);
+  --positive: oklch(0.58 0.11 155);
+  --attention: oklch(0.58 0.13 35);
+  --accent: oklch(0.55 0.15 250);
+  --mono: var(--font-mono), monospace;
+}
+
+@theme inline {
+  --font-sans: var(--font-public-sans);
+  --font-mono: var(--font-ibm-plex-mono);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font-sans), sans-serif;
+}
+
+::placeholder {
+  color: oklch(0.65 0.01 260);
+}
+
+select,
+input,
+button {
+  font-family: var(--font-sans), sans-serif;
+}
+
+button {
+  cursor: pointer;
+}
