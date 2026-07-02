@@ -9,6 +9,9 @@ interface ImportRow {
   rawDescription: string;
   amount: number;
   isCharge: boolean;
+  vendorOverride?: string;
+  categoryText?: string;
+  typeText?: string;
 }
 
 export async function POST(request: Request) {
@@ -28,9 +31,28 @@ export async function POST(request: Request) {
       return { error: "Unknown card" as const };
     }
 
+    const spendCategories = state.categories.filter((c) => !c.system);
+
     const created: Transaction[] = [];
     for (const row of rows) {
-      const classification = classifyTransaction(row.rawDescription, row.isCharge, state.vendorRules);
+      const classification = classifyTransaction(row.rawDescription, row.isCharge, state.vendorRules, row.typeText, row.vendorOverride);
+
+      if (row.vendorOverride?.trim()) {
+        classification.vendor = row.vendorOverride.trim();
+      }
+
+      // A mapped Category column only applies to purchase-type rows (system
+      // categories — Payment/Credit/Cashback/Fees — stay derived from type).
+      // Text that doesn't match an existing category is left alone rather
+      // than silently invented, so the row still surfaces for review.
+      if (classification.type === "purchase" && row.categoryText?.trim()) {
+        const match = spendCategories.find((c) => c.name.toLowerCase() === row.categoryText!.trim().toLowerCase());
+        if (match) {
+          classification.category = match.id;
+          classification.needsReview = false;
+        }
+      }
+
       const txn: Transaction = {
         id: uid("txn"),
         cardId,

@@ -45,6 +45,7 @@ export interface GuessedMapping {
   amountCol: number;
   debitCol: number;
   creditCol: number;
+  categoryCol: number;
   typeCol: number;
 }
 
@@ -67,7 +68,8 @@ export function guessMapping(headers: string[]): GuessedMapping {
     amountCol: find("amount", "amt"),
     debitCol: find("debit"),
     creditCol: find("credit"),
-    typeCol: find("type", "category", "transaction type"),
+    categoryCol: find("category"),
+    typeCol: find("type", "transaction type"),
   };
 }
 

@@ -2,7 +2,7 @@
 
 import { useMemo, useState } from "react";
 import type { AppState, Transaction } from "@/lib/types";
-import { fmtCurrency, monthKey, monthLabel, quarterKey, yearKey } from "@/lib/format";
+import { fmtCurrency, fmtCurrencyWhole, monthKey, monthLabel, quarterKey, yearKey } from "@/lib/format";
 import { Card as PanelCard, SectionTitle, ColorDot, SegmentedControl, inputStyle } from "./ui";
 import type { DrillDown } from "./DrillDownModal";
 
@@ -35,6 +35,52 @@ function rangeCutoff(preset: RangePreset): string | null {
   return cutoff.toISOString().slice(0, 10);
 }
 
+const TREND_BUCKET_COUNT: Record<TrendGroup, number> = { month: 12, quarter: 8, year: 6 };
+// One distinct color per bar position (oldest → newest), cycling for
+// shorter bucket counts (quarter/year).
+const TREND_COLORS = [
+  "oklch(0.55 0.20 25)", // Crimson Red
+  "oklch(0.68 0.17 45)", // Coral Orange
+  "oklch(0.80 0.15 85)", // Amber Yellow
+  "oklch(0.75 0.18 130)", // Lime Green
+  "oklch(0.50 0.12 145)", // Forest Green
+  "oklch(0.65 0.12 195)", // Teal / Cyan
+  "oklch(0.70 0.12 230)", // Sky Blue
+  "oklch(0.45 0.18 265)", // Royal Blue
+  "oklch(0.45 0.15 300)", // Deep Purple
+  "oklch(0.55 0.22 335)", // Magenta / Fuchsia
+  "oklch(0.70 0.13 10)", // Warm Rose / Pink
+  "oklch(0.45 0.02 260)", // Slate Grey / Charcoal
+];
+
+// Trailing N *complete* periods ending at the last fully-elapsed one — the
+// current, still-in-progress month/quarter/year is deliberately excluded so
+// it can't show up as a misleadingly short bar. Missing periods (no
+// transactions at all) are zero-filled rather than silently skipped, so the
+// chart is always a stable calendar window, not a function of which months
+// happen to have data.
+function trailingPeriodKeys(group: TrendGroup, count: number): string[] {
+  const now = new Date();
+  const keys: string[] = [];
+  if (group === "month") {
+    for (let i = count; i >= 1; i--) {
+      const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+      keys.push(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`);
+    }
+  } else if (group === "quarter") {
+    const currentQuarterStartMonth = Math.floor(now.getMonth() / 3) * 3;
+    for (let i = count; i >= 1; i--) {
+      const d = new Date(now.getFullYear(), currentQuarterStartMonth - i * 3, 1);
+      keys.push(`${d.getFullYear()}-Q${Math.floor(d.getMonth() / 3) + 1}`);
+    }
+  } else {
+    for (let i = count; i >= 1; i--) {
+      keys.push(String(now.getFullYear() - i));
+    }
+  }
+  return keys;
+}
+
 export function Dashboard({
   appState,
   onDrillDown,
@@ -60,6 +106,14 @@ export function Dashboard({
 
   const purchases = useMemo(() => filtered.filter((t) => t.type === "purchase"), [filtered]);
 
+  // The trend chart always shows a fixed trailing calendar window regardless
+  // of the top-of-page range preset (6mo/12mo/YTD/All) — only the card
+  // filter narrows it — so switching presets can't shrink or shift it.
+  const purchasesForTrend = useMemo(
+    () => appState.transactions.filter((t) => t.type === "purchase" && (cardFilter === "all" || t.cardId === cardFilter)),
+    [appState.transactions, cardFilter]
+  );
+
   const kpis = useMemo(() => {
     const spend = purchases.reduce((sum, t) => sum + t.amount, 0);
     const payments = filtered.filter((t) => t.type === "payment").reduce((sum, t) => sum + t.amount, 0);
@@ -73,24 +127,18 @@ export function Dashboard({
     const keyFn = trendGroup === "month" ? monthKey : trendGroup === "quarter" ? quarterKey : yearKey;
     const labelFn = trendGroup === "month" ? monthLabel : (k: string) => k;
     const totals = new Map<string, number>();
-    for (const t of purchases) {
+    for (const t of purchasesForTrend) {
       const key = keyFn(t.date);
       totals.set(key, (totals.get(key) || 0) + t.amount);
     }
-    const keys = Array.from(totals.keys()).sort();
-    const capped = keys.slice(-12);
-    return capped.map((key, i) => {
-      const total = totals.get(key) || 0;
-      const prev = i > 0 ? totals.get(capped[i - 1]) || 0 : null;
-      const delta = prev != null && prev > 0 ? ((total - prev) / prev) * 100 : null;
-      return { key, label: labelFn(key), total, delta };
-    });
-  }, [purchases, trendGroup]);
+    const keys = trailingPeriodKeys(trendGroup, TREND_BUCKET_COUNT[trendGroup]);
+    return keys.map((key) => ({ key, label: labelFn(key), total: totals.get(key) || 0 }));
+  }, [purchasesForTrend, trendGroup]);
 
   const maxBarTotal = Math.max(1, ...trendBuckets.map((b) => b.total));
   const chartWidth = 760;
   const chartHeight = 220;
-  const barAreaTop = 20;
+  const barAreaTop = 28;
   const barAreaBottom = 178;
   const barAreaHeight = barAreaBottom - barAreaTop;
   const gap = 10;
@@ -145,8 +193,31 @@ export function Dashboard({
       .slice(0, 6);
   }, [purchases, categoryById]);
 
+  // Same trailing-12-full-months window as the trend chart's Month view —
+  // dividing by a fixed 12 (not "months that had spend") so a category with
+  // three $100 months and nine $0 months correctly averages to $25/mo, not $100/mo.
+  const avgMonthlyByCategory = useMemo(() => {
+    const months = trailingPeriodKeys("month", 12);
+    const monthSet = new Set(months);
+    const totals = new Map<string, number>();
+    for (const t of purchasesForTrend) {
+      if (!t.category || !monthSet.has(monthKey(t.date))) continue;
+      totals.set(t.category, (totals.get(t.category) || 0) + t.amount);
+    }
+    return Array.from(totals.entries())
+      .map(([categoryId, total]) => {
+        const cat = categoryById.get(categoryId);
+        return { key: categoryId, name: cat?.name || categoryId, color: cat?.color || "var(--muted)", total, avgPerMonth: total / months.length };
+      })
+      .sort((a, b) => b.avgPerMonth - a.avgPerMonth);
+  }, [purchasesForTrend, categoryById]);
+
   function purchasesFor(predicate: (t: Transaction) => boolean) {
     return purchases.filter(predicate).sort((a, b) => (a.date < b.date ? 1 : -1));
+  }
+
+  function trendPurchasesFor(predicate: (t: Transaction) => boolean) {
+    return purchasesForTrend.filter(predicate).sort((a, b) => (a.date < b.date ? 1 : -1));
   }
 
   return (
@@ -212,8 +283,7 @@ export function Dashboard({
             const x = startX + i * (barWidth + gap);
             const height = maxBarTotal > 0 ? (bar.total / maxBarTotal) * barAreaHeight : 0;
             const y = barAreaBottom - height;
-            const deltaColor = bar.delta == null ? "var(--muted)" : bar.delta > 0 ? "var(--attention)" : "var(--positive)";
-            const deltaLabel = bar.delta == null ? "" : `${bar.delta > 0 ? "+" : ""}${bar.delta.toFixed(0)}%`;
+            const keyFn = trendGroup === "month" ? monthKey : trendGroup === "quarter" ? quarterKey : yearKey;
             return (
               <g key={bar.key}>
                 <rect
@@ -221,28 +291,22 @@ export function Dashboard({
                   y={y}
                   width={barWidth}
                   height={height}
-                  fill="var(--accent)"
+                  fill={TREND_COLORS[i % TREND_COLORS.length]}
                   rx={3}
                   style={{ cursor: "pointer" }}
                   onClick={() =>
                     onDrillDown({
                       title: bar.label,
-                      subtitle: `${purchasesFor((t) => {
-                        const keyFn = trendGroup === "month" ? monthKey : trendGroup === "quarter" ? quarterKey : yearKey;
-                        return keyFn(t.date) === bar.key;
-                      }).length} purchases`,
-                      transactions: purchasesFor((t) => {
-                        const keyFn = trendGroup === "month" ? monthKey : trendGroup === "quarter" ? quarterKey : yearKey;
-                        return keyFn(t.date) === bar.key;
-                      }),
+                      subtitle: `${trendPurchasesFor((t) => keyFn(t.date) === bar.key).length} purchases`,
+                      transactions: trendPurchasesFor((t) => keyFn(t.date) === bar.key),
                     })
                   }
                 />
                 <text x={x + barWidth / 2} y={200} textAnchor="middle" fontSize={11} fill="var(--muted)" fontFamily="var(--font-sans), sans-serif">
                   {bar.label}
                 </text>
-                <text x={x + barWidth / 2} y={y - 6} textAnchor="middle" fontSize={10.5} fill={deltaColor} fontFamily="var(--mono)">
-                  {deltaLabel}
+                <text x={x + barWidth / 2} y={20} textAnchor="middle" fontSize={10} fontWeight={600} fill="var(--text)" fontFamily="var(--mono)">
+                  {fmtCurrencyWhole(bar.total)}
                 </text>
               </g>
             );
@@ -325,6 +389,60 @@ export function Dashboard({
           </div>
         </PanelCard>
       </div>
+
+      <PanelCard style={{ marginTop: 16 }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14, flexWrap: "wrap", gap: 10 }}>
+          <SectionTitle>Avg Monthly Spend by Category</SectionTitle>
+          <div style={{ fontSize: 12, color: "var(--muted)" }}>Last 12 full months</div>
+        </div>
+        <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13.5 }}>
+          <thead>
+            <tr>
+              <th style={{ textAlign: "left", padding: "0 10px 8px 0", fontSize: 11.5, fontWeight: 600, color: "var(--muted)", borderBottom: "1px solid var(--border)" }}>
+                Category
+              </th>
+              <th style={{ textAlign: "right", padding: "0 0 8px 10px", fontSize: 11.5, fontWeight: 600, color: "var(--muted)", borderBottom: "1px solid var(--border)" }}>
+                Avg / Month
+              </th>
+              <th style={{ textAlign: "right", padding: "0 0 8px 10px", fontSize: 11.5, fontWeight: 600, color: "var(--muted)", borderBottom: "1px solid var(--border)" }}>
+                Total (12mo)
+              </th>
+            </tr>
+          </thead>
+          <tbody>
+            {avgMonthlyByCategory.map((row) => (
+              <tr
+                key={row.key}
+                onClick={() => {
+                  const months = new Set(trailingPeriodKeys("month", 12));
+                  const txns = trendPurchasesFor((t) => t.category === row.key && months.has(monthKey(t.date)));
+                  onDrillDown({
+                    title: row.name,
+                    subtitle: `${txns.length} purchases over the last 12 full months`,
+                    transactions: txns,
+                    viewAllFilter: { categoryFilter: row.key },
+                  });
+                }}
+                style={{ cursor: "pointer" }}
+              >
+                <td style={{ padding: "9px 10px 9px 0", borderBottom: "1px solid var(--border)" }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                    <ColorDot color={row.color} />
+                    {row.name}
+                  </div>
+                </td>
+                <td style={{ padding: "9px 0 9px 10px", borderBottom: "1px solid var(--border)", textAlign: "right", fontFamily: "var(--mono)", fontWeight: 600 }}>
+                  {fmtCurrency(row.avgPerMonth)}
+                </td>
+                <td style={{ padding: "9px 0 9px 10px", borderBottom: "1px solid var(--border)", textAlign: "right", fontFamily: "var(--mono)", color: "var(--muted)" }}>
+                  {fmtCurrency(row.total)}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+        {avgMonthlyByCategory.length === 0 && <div style={{ color: "var(--muted)", fontSize: 13, padding: "10px 0" }}>No data yet.</div>}
+      </PanelCard>
     </div>
   );
 }

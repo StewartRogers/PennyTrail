@@ -74,9 +74,10 @@ export function Categories({ appState, onReload }: { appState: AppState; onReloa
                   onBlur={(e) => {
                     if (e.target.value.trim() && e.target.value !== c.name) handleRename(c.id, e.target.value.trim());
                   }}
+                  className="inline-editable"
+                  title="Click to rename"
                   style={{
                     flex: 1,
-                    border: "1px solid transparent",
                     background: "transparent",
                     fontSize: 14,
                     padding: "5px 6px",

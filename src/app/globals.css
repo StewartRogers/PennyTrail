@@ -46,3 +46,16 @@ button {
 button {
   cursor: pointer;
 }
+
+/* Inline-editable text fields (category/card names, transaction vendor) sit
+   flush with surrounding text until interacted with, so they need a visible
+   affordance on hover/focus — otherwise they're indistinguishable from
+   static labels and the "click to edit" capability goes undiscovered. */
+.inline-editable {
+  border: 1px solid transparent !important;
+  transition: border-color 0.1s ease;
+}
+.inline-editable:hover,
+.inline-editable:focus {
+  border-color: var(--border) !important;
+}

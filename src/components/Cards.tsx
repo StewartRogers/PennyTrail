@@ -81,10 +81,11 @@ export function Cards({ appState, onReload }: { appState: AppState; onReload: ()
               onBlur={(e) => {
                 if (e.target.value.trim() && e.target.value !== c.name) updateCard(c.id, { name: e.target.value.trim() }).then(onReload);
               }}
+              className="inline-editable"
+              title="Click to rename"
               style={{
                 flex: "2 1 210px",
                 minWidth: 210,
-                border: "1px solid transparent",
                 background: "transparent",
                 fontSize: 14,
                 fontWeight: 500,
@@ -97,10 +98,11 @@ export function Cards({ appState, onReload }: { appState: AppState; onReload: ()
               onBlur={(e) => {
                 if (e.target.value !== c.bank) updateCard(c.id, { bank: e.target.value.trim() }).then(onReload);
               }}
+              className="inline-editable"
+              title="Click to edit bank name"
               style={{
                 flex: "1 1 120px",
                 minWidth: 110,
-                border: "1px solid transparent",
                 background: "transparent",
                 fontSize: 13,
                 color: "var(--muted)",

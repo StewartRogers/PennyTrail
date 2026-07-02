@@ -47,3 +47,13 @@ export const TYPE_META: Record<TxnType, { label: string; color: string }> = {
   cashback: { label: "Cashback", color: "oklch(0.55 0.12 145)" },
   fee: { label: "Fee / Interest", color: "oklch(0.55 0.13 35)" },
 };
+
+// The system category a non-purchase type always carries — these are
+// derived from type, not user-assigned, so switching a transaction's type
+// away from "purchase" should snap its category to the matching one here.
+export const SYSTEM_CATEGORY_FOR_TYPE: Partial<Record<TxnType, string>> = {
+  payment: "payment",
+  credit: "credit_refund",
+  cashback: "cashback",
+  fee: "fees_interest",
+};

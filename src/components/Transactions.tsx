@@ -2,10 +2,11 @@
 
 import { useMemo, useState } from "react";
 import type { AppState, Transaction, TxnType } from "@/lib/types";
-import { updateTransaction } from "@/lib/api";
+import { deleteAllTransactions, updateTransaction } from "@/lib/api";
 import { fmtCurrency, fmtDateShort } from "@/lib/format";
-import { TYPE_META } from "@/lib/categories";
-import { PageTitle, Pill, ColorDot, inputStyle, SecondaryButton } from "./ui";
+import { TYPE_META, SYSTEM_CATEGORY_FOR_TYPE } from "@/lib/categories";
+import { PageTitle, ColorDot, inputStyle, SecondaryButton } from "./ui";
+import { useToast } from "./ToastContext";
 
 export interface TxnFilterSeed {
   search?: string;
@@ -27,11 +28,14 @@ export function Transactions({
   seed: TxnFilterSeed;
   seedKey: number;
 }) {
+  const pushToast = useToast();
   const [search, setSearch] = useState("");
   const [cardFilter, setCardFilter] = useState("all");
   const [categoryFilter, setCategoryFilter] = useState("all");
   const [typeFilter, setTypeFilter] = useState<TxnType | "all">("all");
   const [visibleCount, setVisibleCount] = useState(PAGE_SIZE);
+  const [confirmingDeleteAll, setConfirmingDeleteAll] = useState(false);
+  const [deletingAll, setDeletingAll] = useState(false);
 
   // Apply an incoming filter seed (e.g. from a dashboard drill-down "View all")
   // during render rather than in an effect, since it's adjusting state in
@@ -73,6 +77,27 @@ export function Transactions({
   async function commitCategory(t: Transaction, category: string) {
     await updateTransaction(t.id, { category: category || null, needsReview: false });
     await onReload();
+  }
+
+  async function commitType(t: Transaction, type: TxnType) {
+    if (type === t.type) return;
+    // Non-purchase types always carry their fixed system category; switching
+    // back to purchase clears it so the row asks for a real spend category.
+    const category = type === "purchase" ? null : SYSTEM_CATEGORY_FOR_TYPE[type] ?? null;
+    await updateTransaction(t.id, { type, category, needsReview: type === "purchase" });
+    await onReload();
+  }
+
+  async function handleDeleteAll() {
+    setDeletingAll(true);
+    try {
+      const { deletedCount } = await deleteAllTransactions();
+      await onReload();
+      setConfirmingDeleteAll(false);
+      pushToast(`Deleted ${deletedCount} transaction${deletedCount === 1 ? "" : "s"}`);
+    } finally {
+      setDeletingAll(false);
+    }
   }
 
   return (
@@ -200,7 +225,25 @@ export function Transactions({
                     )}
                   </td>
                   <td style={{ padding: "9px 12px", borderBottom: "1px solid var(--border)" }}>
-                    <Pill color={typeMeta.color}>{typeMeta.label}</Pill>
+                    <select
+                      value={t.type}
+                      onChange={(e) => commitType(t, e.target.value as TxnType)}
+                      style={{
+                        border: "none",
+                        borderRadius: 20,
+                        padding: "2px 8px",
+                        fontSize: 11,
+                        fontWeight: 600,
+                        background: typeMeta.color,
+                        color: "white",
+                      }}
+                    >
+                      {(Object.keys(TYPE_META) as TxnType[]).map((type) => (
+                        <option key={type} value={type} style={{ color: "var(--text)", background: "var(--panel)" }}>
+                          {TYPE_META[type].label}
+                        </option>
+                      ))}
+                    </select>
                   </td>
                   <td style={{ padding: "9px 12px", borderBottom: "1px solid var(--border)", textAlign: "right", fontFamily: "var(--mono)", fontWeight: 500 }}>
                     {fmtCurrency(t.amount)}
@@ -215,6 +258,62 @@ export function Transactions({
       {visibleCount < filtered.length && (
         <div style={{ textAlign: "center", marginTop: 16 }}>
           <SecondaryButton onClick={() => setVisibleCount((v) => v + PAGE_SIZE)}>Load more</SecondaryButton>
+        </div>
+      )}
+
+      {appState.transactions.length > 0 && (
+        <div style={{ marginTop: 40, paddingTop: 20, borderTop: "1px solid var(--border)" }}>
+          {!confirmingDeleteAll ? (
+            <button
+              onClick={() => setConfirmingDeleteAll(true)}
+              style={{
+                background: "transparent",
+                border: "1px solid var(--border)",
+                borderRadius: 8,
+                padding: "8px 14px",
+                fontSize: 12.5,
+                color: "var(--attention)",
+              }}
+            >
+              Delete all transactions…
+            </button>
+          ) : (
+            <div
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: 12,
+                flexWrap: "wrap",
+                border: "1px solid var(--attention)",
+                borderRadius: 8,
+                padding: "12px 14px",
+                background: "oklch(0.58 0.13 35 / 0.06)",
+              }}
+            >
+              <div style={{ fontSize: 13, flex: 1, minWidth: 220 }}>
+                Delete all {appState.transactions.length} transaction{appState.transactions.length === 1 ? "" : "s"}? Cards,
+                categories, and templates are kept — this cannot be undone.
+              </div>
+              <SecondaryButton onClick={() => setConfirmingDeleteAll(false)}>Cancel</SecondaryButton>
+              <button
+                onClick={handleDeleteAll}
+                disabled={deletingAll}
+                style={{
+                  background: "var(--attention)",
+                  color: "white",
+                  border: "none",
+                  borderRadius: 8,
+                  padding: "9px 16px",
+                  fontSize: 13,
+                  fontWeight: 600,
+                  cursor: deletingAll ? "not-allowed" : "pointer",
+                  opacity: deletingAll ? 0.7 : 1,
+                }}
+              >
+                {deletingAll ? "Deleting…" : "Yes, delete all"}
+              </button>
+            </div>
+          )}
         </div>
       )}
     </div>
@@ -236,8 +335,9 @@ function VendorInput({ vendor, onCommit }: { vendor: string; onCommit: (v: strin
       onKeyDown={(e) => {
         if (e.key === "Enter") (e.target as HTMLInputElement).blur();
       }}
+      className="inline-editable"
+      title="Click to edit vendor"
       style={{
-        border: "1px solid transparent",
         background: "transparent",
         fontSize: 13,
         padding: "4px 6px",

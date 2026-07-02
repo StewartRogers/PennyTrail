@@ -23,6 +23,10 @@ export async function POST(request: Request) {
       amountConvention: body.amountConvention === "negative_is_purchase" ? "negative_is_purchase" : "positive_is_purchase",
       debitCol: Number(body.debitCol ?? -1),
       creditCol: Number(body.creditCol ?? -1),
+      vendorCol: Number(body.vendorCol ?? -1),
+      categoryCol: Number(body.categoryCol ?? -1),
+      typeCol: Number(body.typeCol ?? -1),
+      skipRows: Number(body.skipRows ?? 0),
       headerSnapshot: Array.isArray(body.headerSnapshot) ? body.headerSnapshot : [],
     };
     state.templates.push(newTemplate);

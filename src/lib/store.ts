@@ -3,7 +3,11 @@ import path from "path";
 import type { AppState } from "./types";
 import { defaultCategories } from "./categories";
 
-const DATA_DIR = path.join(process.cwd(), "data");
+// Overridable so verification/test runs can point at a scratch directory
+// instead of the real store — defaults to the normal on-disk location.
+const DATA_DIR = process.env.PENNYTRAIL_DATA_DIR
+  ? path.resolve(process.env.PENNYTRAIL_DATA_DIR)
+  : path.join(process.cwd(), "data");
 const DATA_FILE = path.join(DATA_DIR, "store.json");
 
 function emptyState(): AppState {

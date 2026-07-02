@@ -9,6 +9,13 @@ export function fmtCurrencyShort(n: number | null | undefined): string {
   return fmtCurrency(n);
 }
 
+// Whole-dollar amount, no "k" abbreviation — used where the actual sum
+// matters more than compactness (e.g. chart bar labels).
+export function fmtCurrencyWhole(n: number | null | undefined): string {
+  if (n == null || isNaN(n)) return "$0";
+  return n.toLocaleString("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 });
+}
+
 export function fmtDateShort(iso: string | null | undefined): string {
   if (!iso) return "";
   const [y, m, d] = iso.split("-").map(Number);

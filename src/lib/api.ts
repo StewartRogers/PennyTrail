@@ -45,6 +45,11 @@ export interface ImportRow {
   rawDescription: string;
   amount: number;
   isCharge: boolean;
+  // Optional overrides sourced from mapped Vendor/Category/Type columns.
+  // When present, these take precedence over auto-classification.
+  vendorOverride?: string;
+  categoryText?: string;
+  typeText?: string;
 }
 
 export function importTransactions(
@@ -56,7 +61,11 @@ export function importTransactions(
 
 export function updateTransaction(
   id: string,
-  patch: Partial<Pick<Transaction, "vendor" | "category" | "needsReview">> & { rememberVendor?: boolean }
+  patch: Partial<Pick<Transaction, "vendor" | "type" | "category" | "needsReview">> & { rememberVendor?: boolean }
 ): Promise<Transaction> {
   return request(`/api/transactions/${id}`, { method: "PATCH", body: JSON.stringify(patch) });
+}
+
+export function deleteAllTransactions(): Promise<{ deletedCount: number }> {
+  return request("/api/transactions", { method: "DELETE" });
 }

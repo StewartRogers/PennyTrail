@@ -7,13 +7,18 @@ import { PageTitle } from "./ui";
 
 function summarize(t: Template): string {
   const col = (i: number) => (i >= 0 && t.headerSnapshot[i] != null ? t.headerSnapshot[i] : "—");
-  const parts = [`Date: ${col(t.dateCol)}`, `Description: ${col(t.descCol)}`];
+  const parts: string[] = [];
+  if (t.skipRows > 0) parts.push(`Header on row ${t.skipRows + 1}`);
+  parts.push(`Date: ${col(t.dateCol)}`, `Description: ${col(t.descCol)}`);
   if (t.amountMode === "single") {
     const sign = t.amountConvention === "negative_is_purchase" ? "negative = purchase" : "positive = purchase";
     parts.push(`Amount: ${col(t.amountCol)} (${sign})`);
   } else {
     parts.push(`Debit: ${col(t.debitCol)}`, `Credit: ${col(t.creditCol)}`);
   }
+  if (t.vendorCol > -1) parts.push(`Vendor: ${col(t.vendorCol)}`);
+  if (t.categoryCol > -1) parts.push(`Category: ${col(t.categoryCol)}`);
+  if (t.typeCol > -1) parts.push(`Type: ${col(t.typeCol)}`);
   return parts.join(" · ");
 }
 

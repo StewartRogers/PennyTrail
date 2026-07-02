@@ -35,6 +35,14 @@ export interface Template {
   amountConvention: AmountConvention;
   debitCol: number;
   creditCol: number;
+  // Optional source columns. -1 means "not mapped" — PennyTrail derives
+  // vendor/category/type itself via classification in that case.
+  vendorCol: number;
+  categoryCol: number;
+  typeCol: number;
+  // Rows to skip before the header row — some banks prepend summary/
+  // metadata rows before the real column headers.
+  skipRows: number;
   headerSnapshot: string[];
 }
 
