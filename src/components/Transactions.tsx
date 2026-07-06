@@ -4,7 +4,8 @@ import { useMemo, useState } from "react";
 import type { AppState, Transaction, TxnType } from "@/lib/types";
 import { deleteAllTransactions, updateTransaction } from "@/lib/api";
 import { fmtCurrency, fmtDateShort } from "@/lib/format";
-import { TYPE_META, SYSTEM_CATEGORY_FOR_TYPE } from "@/lib/categories";
+import { TYPE_META, sortCategoriesByName } from "@/lib/categories";
+import { categoryIdForTransaction, parentIdForTransaction, vendorNameForTransaction } from "@/lib/vendors";
 import { PageTitle, ColorDot, inputStyle, SecondaryButton } from "./ui";
 import { useToast } from "./ToastContext";
 
@@ -13,6 +14,7 @@ export interface TxnFilterSeed {
   categoryFilter?: string;
   cardFilter?: string;
   typeFilter?: TxnType | "all";
+  vendorFilter?: string; // a ParentVendor id
 }
 
 const PAGE_SIZE = 40;
@@ -33,6 +35,7 @@ export function Transactions({
   const [cardFilter, setCardFilter] = useState("all");
   const [categoryFilter, setCategoryFilter] = useState("all");
   const [typeFilter, setTypeFilter] = useState<TxnType | "all">("all");
+  const [vendorFilter, setVendorFilter] = useState<string | null>(null);
   const [visibleCount, setVisibleCount] = useState(PAGE_SIZE);
   const [confirmingDeleteAll, setConfirmingDeleteAll] = useState(false);
   const [deletingAll, setDeletingAll] = useState(false);
@@ -47,44 +50,58 @@ export function Transactions({
     setCardFilter(seed.cardFilter ?? "all");
     setCategoryFilter(seed.categoryFilter ?? "all");
     setTypeFilter(seed.typeFilter ?? "all");
+    setVendorFilter(seed.vendorFilter ?? null);
     setVisibleCount(PAGE_SIZE);
   }
 
   const cardById = useMemo(() => new Map(appState.cards.map((c) => [c.id, c])), [appState.cards]);
   const categoryById = useMemo(() => new Map(appState.categories.map((c) => [c.id, c])), [appState.categories]);
-  const spendCategories = useMemo(() => appState.categories.filter((c) => !c.system), [appState.categories]);
+  const sortedCategories = useMemo(() => sortCategoriesByName(appState.categories), [appState.categories]);
+  const childById = useMemo(() => new Map(appState.childVendors.map((c) => [c.id, c])), [appState.childVendors]);
+  const parentById = useMemo(() => new Map(appState.parentVendors.map((p) => [p.id, p])), [appState.parentVendors]);
+  const sortedParents = useMemo(
+    () => [...appState.parentVendors].sort((a, b) => a.name.localeCompare(b.name)),
+    [appState.parentVendors]
+  );
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
     return appState.transactions.filter((t) => {
-      if (q && !t.vendor.toLowerCase().includes(q) && !t.rawDescription.toLowerCase().includes(q)) return false;
+      const vendorName = vendorNameForTransaction(t, childById) || "";
+      if (q && !vendorName.toLowerCase().includes(q) && !t.rawDescription.toLowerCase().includes(q)) return false;
       if (cardFilter !== "all" && t.cardId !== cardFilter) return false;
       if (categoryFilter === "needs_review" && !t.needsReview) return false;
-      else if (categoryFilter !== "all" && categoryFilter !== "needs_review" && t.category !== categoryFilter) return false;
+      else if (categoryFilter !== "all" && categoryFilter !== "needs_review" && categoryIdForTransaction(t, childById, parentById) !== categoryFilter)
+        return false;
       if (typeFilter !== "all" && t.type !== typeFilter) return false;
+      if (vendorFilter && parentIdForTransaction(t, childById) !== vendorFilter) return false;
       return true;
     });
-  }, [appState.transactions, search, cardFilter, categoryFilter, typeFilter]);
+  }, [appState.transactions, search, cardFilter, categoryFilter, typeFilter, vendorFilter, childById, parentById]);
 
   const visible = filtered.slice(0, visibleCount);
 
-  async function commitVendor(t: Transaction, vendor: string) {
-    if (vendor === t.vendor) return;
-    await updateTransaction(t.id, { vendor });
+  async function commitVendorReassign(t: Transaction, parentId: string) {
+    if (parentId === parentIdForTransaction(t, childById)) return;
+    await updateTransaction(t.id, { parentId });
     await onReload();
   }
 
-  async function commitCategory(t: Transaction, category: string) {
-    await updateTransaction(t.id, { category: category || null, needsReview: false });
-    await onReload();
+  async function commitNewVendor(t: Transaction, name: string, category: string): Promise<boolean> {
+    try {
+      await updateTransaction(t.id, { newParentName: name, category });
+      await onReload();
+      pushToast(`Created vendor "${name}"`);
+      return true;
+    } catch (err) {
+      pushToast(err instanceof Error ? err.message : "Failed to create vendor");
+      return false;
+    }
   }
 
   async function commitType(t: Transaction, type: TxnType) {
     if (type === t.type) return;
-    // Non-purchase types always carry their fixed system category; switching
-    // back to purchase clears it so the row asks for a real spend category.
-    const category = type === "purchase" ? null : SYSTEM_CATEGORY_FOR_TYPE[type] ?? null;
-    await updateTransaction(t.id, { type, category, needsReview: type === "purchase" });
+    await updateTransaction(t.id, { type });
     await onReload();
   }
 
@@ -103,7 +120,7 @@ export function Transactions({
   return (
     <div>
       <PageTitle>Transactions</PageTitle>
-      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 16 }}>
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 16, alignItems: "center" }}>
         <input
           value={search}
           onChange={(e) => {
@@ -138,7 +155,7 @@ export function Transactions({
         >
           <option value="all">All Categories</option>
           <option value="needs_review">⚠ Needs Review</option>
-          {appState.categories.map((c) => (
+          {sortedCategories.map((c) => (
             <option key={c.id} value={c.id}>
               {c.name}
             </option>
@@ -159,6 +176,31 @@ export function Transactions({
           <option value="cashback">Cashback</option>
           <option value="fee">Fee / Interest</option>
         </select>
+        {vendorFilter && (
+          <span
+            style={{
+              display: "inline-flex",
+              alignItems: "center",
+              gap: 6,
+              background: "var(--panel)",
+              border: "1px solid var(--border)",
+              borderRadius: 20,
+              padding: "5px 10px",
+              fontSize: 12.5,
+            }}
+          >
+            Vendor: {parentById.get(vendorFilter)?.name || vendorFilter}
+            <button
+              onClick={() => {
+                setVendorFilter(null);
+                setVisibleCount(PAGE_SIZE);
+              }}
+              style={{ border: "none", background: "transparent", cursor: "pointer", color: "var(--muted)", fontSize: 13 }}
+            >
+              ×
+            </button>
+          </span>
+        )}
       </div>
 
       <div style={{ fontSize: 12.5, color: "var(--muted)", marginBottom: 8 }}>
@@ -188,7 +230,8 @@ export function Transactions({
           <tbody>
             {visible.map((t) => {
               const card = cardById.get(t.cardId);
-              const category = t.category ? categoryById.get(t.category) : null;
+              const categoryId = categoryIdForTransaction(t, childById, parentById);
+              const category = categoryId ? categoryById.get(categoryId) : null;
               const typeMeta = TYPE_META[t.type];
               return (
                 <tr key={t.id} style={{ background: t.needsReview ? "oklch(0.58 0.13 35 / 0.06)" : undefined }}>
@@ -204,25 +247,18 @@ export function Transactions({
                     )}
                   </td>
                   <td style={{ padding: "9px 12px", borderBottom: "1px solid var(--border)" }}>
-                    <VendorInput vendor={t.vendor} onCommit={(v) => commitVendor(t, v)} />
+                    <VendorCell
+                      txn={t}
+                      currentParentId={parentIdForTransaction(t, childById)}
+                      currentVendorName={vendorNameForTransaction(t, childById)}
+                      parents={sortedParents}
+                      categories={sortedCategories}
+                      onReassign={(parentId) => commitVendorReassign(t, parentId)}
+                      onCreateNew={(name, category) => commitNewVendor(t, name, category)}
+                    />
                   </td>
                   <td style={{ padding: "9px 12px", borderBottom: "1px solid var(--border)" }}>
-                    {t.type === "purchase" ? (
-                      <select
-                        value={t.category || ""}
-                        onChange={(e) => commitCategory(t, e.target.value)}
-                        style={{ border: "1px solid var(--border)", borderRadius: 6, padding: "5px 6px", fontSize: 12.5 }}
-                      >
-                        <option value="">Uncategorized</option>
-                        {spendCategories.map((c) => (
-                          <option key={c.id} value={c.id}>
-                            {c.name}
-                          </option>
-                        ))}
-                      </select>
-                    ) : (
-                      <span style={{ fontSize: 12.5, color: "var(--muted)" }}>{category?.name || "—"}</span>
-                    )}
+                    <span style={{ fontSize: 12.5, color: "var(--muted)" }}>{category?.name || "—"}</span>
                   </td>
                   <td style={{ padding: "9px 12px", borderBottom: "1px solid var(--border)" }}>
                     <select
@@ -320,31 +356,85 @@ export function Transactions({
   );
 }
 
-function VendorInput({ vendor, onCommit }: { vendor: string; onCommit: (v: string) => void }) {
-  const [value, setValue] = useState(vendor);
-  const [prevVendor, setPrevVendor] = useState(vendor);
-  if (vendor !== prevVendor) {
-    setPrevVendor(vendor);
-    setValue(vendor);
+function VendorCell({
+  txn,
+  currentParentId,
+  currentVendorName,
+  parents,
+  categories,
+  onReassign,
+  onCreateNew,
+}: {
+  txn: Transaction;
+  currentParentId: string | null;
+  currentVendorName: string | null;
+  parents: { id: string; name: string }[];
+  categories: { id: string; name: string }[];
+  onReassign: (parentId: string) => void;
+  onCreateNew: (name: string, category: string) => Promise<boolean>;
+}) {
+  const [creating, setCreating] = useState(false);
+  const [newName, setNewName] = useState(currentVendorName || "");
+  const [newCategory, setNewCategory] = useState(categories[0]?.id || "");
+
+  if (creating) {
+    return (
+      <div style={{ display: "flex", flexDirection: "column", gap: 4, minWidth: 180 }}>
+        <input
+          value={newName}
+          onChange={(e) => setNewName(e.target.value)}
+          placeholder="Vendor name"
+          style={{ ...inputStyle, fontSize: 12.5, padding: "5px 6px" }}
+        />
+        <select value={newCategory} onChange={(e) => setNewCategory(e.target.value)} style={{ ...inputStyle, fontSize: 12.5, padding: "5px 6px" }}>
+          {categories.map((c) => (
+            <option key={c.id} value={c.id}>
+              {c.name}
+            </option>
+          ))}
+        </select>
+        <div style={{ display: "flex", gap: 6 }}>
+          <button
+            onClick={async () => {
+              if (!newName.trim() || !newCategory) return;
+              const ok = await onCreateNew(newName.trim(), newCategory);
+              if (ok) setCreating(false);
+            }}
+            style={{ border: "1px solid var(--accent)", background: "var(--accent)", color: "white", borderRadius: 6, padding: "4px 8px", fontSize: 12 }}
+          >
+            Save
+          </button>
+          <button
+            onClick={() => setCreating(false)}
+            style={{ border: "1px solid var(--border)", background: "transparent", borderRadius: 6, padding: "4px 8px", fontSize: 12 }}
+          >
+            Cancel
+          </button>
+        </div>
+      </div>
+    );
   }
+
   return (
-    <input
-      value={value}
-      onChange={(e) => setValue(e.target.value)}
-      onBlur={() => onCommit(value)}
-      onKeyDown={(e) => {
-        if (e.key === "Enter") (e.target as HTMLInputElement).blur();
+    <select
+      value={currentParentId ?? ""}
+      onChange={(e) => {
+        if (e.target.value === "__new__") {
+          setNewName(currentVendorName || txn.rawDescription);
+          setCreating(true);
+        } else {
+          onReassign(e.target.value);
+        }
       }}
-      className="inline-editable"
-      title="Click to edit vendor"
-      style={{
-        background: "transparent",
-        fontSize: 13,
-        padding: "4px 6px",
-        borderRadius: 6,
-        width: 150,
-        fontFamily: "var(--font-sans), sans-serif",
-      }}
-    />
+      style={{ border: "1px solid var(--border)", borderRadius: 6, padding: "5px 6px", fontSize: 12.5, maxWidth: 200 }}
+    >
+      {!currentParentId && <option value="">— Unassigned —</option>}
+      {parents.map((p) => (
+        <option key={p.id} value={p.id}>
+          {p.name}
+        </option>
+      ))}
+      <option value="__new__">+ Create new vendor…</option>
+    </select>
   );
 }

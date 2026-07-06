@@ -15,7 +15,8 @@ function emptyState(): AppState {
     cards: [],
     categories: defaultCategories(),
     templates: [],
-    vendorRules: [],
+    parentVendors: [],
+    childVendors: [],
     transactions: [],
   };
 }

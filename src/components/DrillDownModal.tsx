@@ -1,7 +1,8 @@
 "use client";
 
-import type { Card, Transaction } from "@/lib/types";
+import type { Card, ChildVendor, Transaction } from "@/lib/types";
 import { fmtCurrency, fmtDateShort } from "@/lib/format";
+import { vendorNameForTransaction } from "@/lib/vendors";
 import type { TxnFilterSeed } from "./Transactions";
 
 export interface DrillDown {
@@ -14,15 +15,18 @@ export interface DrillDown {
 export function DrillDownModal({
   drillDown,
   cards,
+  childVendors,
   onClose,
   onViewAll,
 }: {
   drillDown: DrillDown;
   cards: Card[];
+  childVendors: ChildVendor[];
   onClose: () => void;
   onViewAll: () => void;
 }) {
   const cardById = new Map(cards.map((c) => [c.id, c]));
+  const childById = new Map(childVendors.map((c) => [c.id, c]));
 
   return (
     <div
@@ -88,7 +92,7 @@ export function DrillDownModal({
               >
                 <div style={{ minWidth: 0, flex: 1 }}>
                   <div style={{ fontSize: 13.5, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                    {t.vendor}
+                    {vendorNameForTransaction(t, childById) || "—"}
                   </div>
                   <div style={{ fontSize: 11.5, color: "var(--muted)" }}>
                     {fmtDateShort(t.date)} · {card ? card.name : "—"}

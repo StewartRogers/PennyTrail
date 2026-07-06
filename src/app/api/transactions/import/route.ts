@@ -1,8 +1,9 @@
 import { NextResponse } from "next/server";
 import { updateState } from "@/lib/store";
 import { uid } from "@/lib/id";
-import { classifyTransaction } from "@/lib/classify";
-import type { Transaction } from "@/lib/types";
+import { classifyTransactionType, cleanVendorName, resolveVendor } from "@/lib/classify";
+import { findChildByRawName, findParentByName } from "@/lib/vendors";
+import type { ChildVendor, ParentVendor, Transaction } from "@/lib/types";
 
 interface ImportRow {
   date: string;
@@ -31,25 +32,45 @@ export async function POST(request: Request) {
       return { error: "Unknown card" as const };
     }
 
-    const spendCategories = state.categories.filter((c) => !c.system);
-
     const created: Transaction[] = [];
     for (const row of rows) {
-      const classification = classifyTransaction(row.rawDescription, row.isCharge, state.vendorRules, row.typeText, row.vendorOverride);
+      const type = classifyTransactionType(row.rawDescription, row.isCharge, row.typeText, row.vendorOverride);
+      const cleanedName = cleanVendorName(row.vendorOverride || row.rawDescription);
 
-      if (row.vendorOverride?.trim()) {
-        classification.vendor = row.vendorOverride.trim();
-      }
+      let childVendorId: string | null = null;
+      let needsReview = true;
 
-      // A mapped Category column only applies to purchase-type rows (system
-      // categories — Payment/Credit/Cashback/Fees — stay derived from type).
-      // Text that doesn't match an existing category is left alone rather
-      // than silently invented, so the row still surfaces for review.
-      if (classification.type === "purchase" && row.categoryText?.trim()) {
-        const match = spendCategories.find((c) => c.name.toLowerCase() === row.categoryText!.trim().toLowerCase());
-        if (match) {
-          classification.category = match.id;
-          classification.needsReview = false;
+      const match = resolveVendor(cleanedName, state.childVendors, state.parentVendors);
+      if (match.kind === "exact") {
+        childVendorId = match.childVendorId;
+        needsReview = false;
+      } else if (match.kind === "fuzzy") {
+        const child: ChildVendor = { id: uid("child"), parentId: match.parentId, rawName: cleanedName };
+        state.childVendors.push(child);
+        childVendorId = child.id;
+        needsReview = false;
+      } else if (row.categoryText?.trim()) {
+        // A mapped Category column names a category this bank already
+        // assigns — trust it to create a brand-new vendor immediately
+        // rather than asking the user to categorize something the bank
+        // itself already told us how to classify. Parent and vendor names
+        // are unique, so reuse an existing same-named one if present
+        // (there's no user in the loop here to resolve a conflict) instead
+        // of forking a duplicate.
+        const category = state.categories.find((c) => c.name.toLowerCase() === row.categoryText!.trim().toLowerCase());
+        if (category) {
+          let parent: ParentVendor | undefined = findParentByName(state.parentVendors, cleanedName);
+          if (!parent) {
+            parent = { id: uid("vnd"), name: cleanedName, category: category.id };
+            state.parentVendors.push(parent);
+          }
+          let child: ChildVendor | undefined = findChildByRawName(state.childVendors, cleanedName);
+          if (!child) {
+            child = { id: uid("child"), parentId: parent.id, rawName: cleanedName };
+            state.childVendors.push(child);
+          }
+          childVendorId = child.id;
+          needsReview = false;
         }
       }
 
@@ -59,10 +80,9 @@ export async function POST(request: Request) {
         date: row.date,
         rawDescription: row.rawDescription,
         amount: Math.abs(row.amount),
-        type: classification.type,
-        category: classification.category,
-        vendor: classification.vendor,
-        needsReview: classification.needsReview,
+        type,
+        childVendorId,
+        needsReview,
       };
       state.transactions.push(txn);
       created.push(txn);

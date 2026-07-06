@@ -13,6 +13,12 @@ This version has breaking changes — APIs, conventions, and file structure may 
   a DB without being asked.
 - **Ports are non-default**: `npm run dev` serves on `3607`, `npm run
   start` on `2607` (see `scripts` in `package.json`), not the usual 3000.
+  Ad-hoc verification (an agent driving the app to prove a change works)
+  should use `npm run test:server` (port `4607`) instead of `dev` — that
+  way a verification run never collides with a real dev server the user
+  already has open on `3607`. Also point `PENNYTRAIL_DATA_DIR` at a
+  scratch directory for these runs so they don't read/write the user's
+  real `data/store.json`.
 - **`package.json` has an `overrides.postcss` pin.** Don't remove it and
   never run `npm audit fix --force` here — npm's own suggested fix for the
   bundled-postcss advisory is to downgrade `next` to `9.3.3`, which is a

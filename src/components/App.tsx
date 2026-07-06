@@ -12,8 +12,9 @@ import { Transactions, type TxnFilterSeed } from "./Transactions";
 import { Categories } from "./Categories";
 import { Cards } from "./Cards";
 import { Templates } from "./Templates";
+import { VendorMappings } from "./VendorMappings";
 
-export type Screen = "dashboard" | "import" | "transactions" | "categories" | "cards" | "templates";
+export type Screen = "dashboard" | "import" | "transactions" | "categories" | "vendors" | "cards" | "templates";
 
 function AppInner() {
   const [screen, setScreen] = useState<Screen>("dashboard");
@@ -77,6 +78,7 @@ function AppInner() {
           <Transactions appState={appState} onReload={reload} seed={txnSeed.filter} seedKey={txnSeed.n} />
         )}
         {screen === "categories" && <Categories appState={appState} onReload={reload} />}
+        {screen === "vendors" && <VendorMappings appState={appState} onReload={reload} />}
         {screen === "cards" && <Cards appState={appState} onReload={reload} />}
         {screen === "templates" && <Templates appState={appState} onReload={reload} />}
       </div>
@@ -85,6 +87,7 @@ function AppInner() {
         <DrillDownModal
           drillDown={drillDown}
           cards={appState.cards}
+          childVendors={appState.childVendors}
           onClose={() => setDrillDown(null)}
           onViewAll={() => navigateToTransactions(drillDown.viewAllFilter ?? {})}
         />

@@ -19,7 +19,6 @@ export interface Category {
   id: string;
   name: string;
   color: string;
-  system: boolean;
 }
 
 export interface Template {
@@ -46,11 +45,24 @@ export interface Template {
   headerSnapshot: string[];
 }
 
-export interface VendorRule {
+// The parent is the stable, user-owned vendor identity: a name and a
+// category, nothing else. It's never recomputed from text — only ever
+// created or edited directly by the user (or, once, by a fuzzy-match
+// auto-attach — see ChildVendor).
+export interface ParentVendor {
   id: string;
-  pattern: string;
-  vendor: string;
+  name: string;
   category: string;
+}
+
+// A child is an exact-match key: one specific cleaned-vendor-name shape
+// (e.g. "Freedom Mobile Toronto") linked to the parent it belongs to. Once
+// created, its parentId is authoritative — matching logic only ever
+// decides where a *new* child lands, never re-evaluates an existing one.
+export interface ChildVendor {
+  id: string;
+  parentId: string;
+  rawName: string;
 }
 
 export interface Transaction {
@@ -60,8 +72,10 @@ export interface Transaction {
   rawDescription: string;
   amount: number; // always positive
   type: TxnType;
-  category: string | null;
-  vendor: string;
+  // Category is intentionally not stored here — it's always derived live
+  // via childVendorId -> ChildVendor.parentId -> ParentVendor.category, so
+  // there's no denormalized copy that can go stale or disagree with itself.
+  childVendorId: string | null;
   needsReview: boolean;
 }
 
@@ -69,6 +83,7 @@ export interface AppState {
   cards: Card[];
   categories: Category[];
   templates: Template[];
-  vendorRules: VendorRule[];
+  parentVendors: ParentVendor[];
+  childVendors: ChildVendor[];
   transactions: Transaction[];
 }

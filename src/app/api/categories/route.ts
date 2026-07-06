@@ -12,7 +12,7 @@ export async function POST(request: Request) {
   }
 
   const { result: category } = await updateState((state) => {
-    const newCategory: Category = { id: uid("cat"), name, color, system: false };
+    const newCategory: Category = { id: uid("cat"), name, color };
     state.categories.push(newCategory);
     return newCategory;
   });

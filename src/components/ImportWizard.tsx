@@ -1,13 +1,12 @@
 "use client";
 
 import { useMemo, useState, type CSSProperties } from "react";
-import type { AppState, AmountConvention, AmountMode, Network } from "@/lib/types";
+import type { AppState, AmountConvention, AmountMode, Category, Network, TxnType } from "@/lib/types";
 import { parseCSV, guessMapping, parseAmount, parseDateFlexible } from "@/lib/csv";
-import { buildVendorRulePattern, classifyTransaction, matchVendorRule, type Classification } from "@/lib/classify";
-import { addCard, addTemplate, importTransactions, updateCard, updateTransaction, type ImportRow } from "@/lib/api";
+import { classifyTransactionType, cleanVendorName, resolveVendor } from "@/lib/classify";
+import { addCard, addTemplate, fetchState, importTransactions, updateCard, updateTransaction, type ImportRow } from "@/lib/api";
 import { fmtCurrency, fmtDateShort } from "@/lib/format";
-import { TYPE_META, SYSTEM_CATEGORY_FOR_TYPE } from "@/lib/categories";
-import type { TxnType } from "@/lib/types";
+import { TYPE_META, sortCategoriesByName } from "@/lib/categories";
 import { PrimaryButton, SecondaryButton, Pill, inputStyle, labelStyle } from "./ui";
 import { useToast } from "./ToastContext";
 import type { Transaction } from "@/lib/types";
@@ -53,6 +52,13 @@ interface ParsedRow {
   typeText?: string;
 }
 
+interface RowPreview {
+  type: TxnType;
+  vendorName: string;
+  categoryName: string | null;
+  needsReview: boolean;
+}
+
 const STEP_LABELS = ["1 · Card", "2 · Upload & Map", "3 · Confirm", "4 · Review", "5 · Done"];
 
 function computeRows(dataRows: string[][], mapping: Mapping): ParsedRow[] {
@@ -76,17 +82,32 @@ function computeRows(dataRows: string[][], mapping: Mapping): ParsedRow[] {
   });
 }
 
-function applyOverrides(classification: Classification, row: ParsedRow, spendCategories: { id: string; name: string }[]): Classification {
-  const result = { ...classification };
-  if (row.vendorOverride?.trim()) result.vendor = row.vendorOverride.trim();
-  if (result.type === "purchase" && row.categoryText?.trim()) {
-    const match = spendCategories.find((c) => c.name.toLowerCase() === row.categoryText!.trim().toLowerCase());
-    if (match) {
-      result.category = match.id;
-      result.needsReview = false;
-    }
+// Client-side mirror of what the import route will actually do, purely for
+// the "Confirm" preview table — the server is the source of truth at
+// commit time, this just shows what to expect.
+function previewClassification(row: ParsedRow, appState: AppState, categories: Category[]): RowPreview {
+  const type = classifyTransactionType(row.rawDescription, row.isCharge, row.typeText, row.vendorOverride);
+  const cleanedName = cleanVendorName(row.vendorOverride || row.rawDescription);
+  const match = resolveVendor(cleanedName, appState.childVendors, appState.parentVendors);
+
+  if (match.kind === "exact") {
+    const child = appState.childVendors.find((c) => c.id === match.childVendorId);
+    const parent = child ? appState.parentVendors.find((p) => p.id === child.parentId) : undefined;
+    const categoryName = parent ? categories.find((c) => c.id === parent.category)?.name ?? null : null;
+    return { type, vendorName: cleanedName, categoryName, needsReview: false };
   }
-  return result;
+  if (match.kind === "fuzzy") {
+    const parent = appState.parentVendors.find((p) => p.id === match.parentId);
+    const categoryName = parent ? categories.find((c) => c.id === parent.category)?.name ?? null : null;
+    return { type, vendorName: cleanedName, categoryName, needsReview: false };
+  }
+  // A mapped Category column names a category the bank already assigns —
+  // trust it, same as the server does at import time.
+  if (row.categoryText?.trim()) {
+    const cat = categories.find((c) => c.name.toLowerCase() === row.categoryText!.trim().toLowerCase());
+    if (cat) return { type, vendorName: cleanedName, categoryName: cat.name, needsReview: false };
+  }
+  return { type, vendorName: cleanedName, categoryName: null, needsReview: true };
 }
 
 const mapTh: CSSProperties = {
@@ -159,13 +180,20 @@ export function ImportWizard({
   const [reviewTotal, setReviewTotal] = useState(0);
   const [reviewResolvedCount, setReviewResolvedCount] = useState(0);
   const [reviewType, setReviewType] = useState<TxnType>("purchase");
-  const [reviewVendor, setReviewVendor] = useState("");
+  // "__new__" means "create a brand-new vendor"; otherwise it's an existing ParentVendor id.
+  const [reviewParentId, setReviewParentId] = useState<string>("__new__");
+  const [reviewNewName, setReviewNewName] = useState("");
   const [reviewCategory, setReviewCategory] = useState("");
-  const [reviewRemember, setReviewRemember] = useState(true);
   const [summary, setSummary] = useState({ total: 0, auto: 0, review: 0 });
 
   const selectedCard = appState.cards.find((c) => c.id === cardId) || null;
-  const spendCategories = appState.categories.filter((c) => !c.system);
+  const sortedCategories = useMemo(() => sortCategoriesByName(appState.categories), [appState.categories]);
+  const sortedParents = useMemo(
+    () => [...appState.parentVendors].sort((a, b) => a.name.localeCompare(b.name)),
+    [appState.parentVendors]
+  );
+  const categoryById = useMemo(() => new Map(appState.categories.map((c) => [c.id, c])), [appState.categories]);
+  const parentById = useMemo(() => new Map(appState.parentVendors.map((p) => [p.id, p])), [appState.parentVendors]);
 
   const matchingTemplates = useMemo(() => {
     if (!selectedCard) return [];
@@ -179,21 +207,12 @@ export function ImportWizard({
       parsedRows
         .filter((r) => r.date)
         .slice(0, 10)
-        .map((r) => {
-          const c = classifyTransaction(r.rawDescription, r.isCharge, appState.vendorRules, r.typeText, r.vendorOverride);
-          return { ...r, ...applyOverrides(c, r, spendCategories) };
-        }),
-    [parsedRows, appState.vendorRules, spendCategories]
+        .map((r) => ({ ...r, ...previewClassification(r, appState, appState.categories) })),
+    [parsedRows, appState]
   );
 
   const validRows = useMemo(() => parsedRows.filter((r) => r.date && !isNaN(r.amount)), [parsedRows]);
-  const classifiedAll = useMemo(
-    () =>
-      validRows.map((r) =>
-        applyOverrides(classifyTransaction(r.rawDescription, r.isCharge, appState.vendorRules, r.typeText, r.vendorOverride), r, spendCategories)
-      ),
-    [validRows, appState.vendorRules, spendCategories]
-  );
+  const classifiedAll = useMemo(() => validRows.map((r) => previewClassification(r, appState, appState.categories)), [validRows, appState]);
   const autoCount = classifiedAll.filter((c) => !c.needsReview).length;
   const reviewCount = classifiedAll.filter((c) => c.needsReview).length;
 
@@ -343,10 +362,7 @@ export function ImportWizard({
       setReviewQueue(needsReview);
       setReviewTotal(needsReview.length);
       setReviewResolvedCount(0);
-      setReviewType(needsReview[0].type);
-      setReviewVendor(needsReview[0].vendor);
-      setReviewCategory("");
-      setReviewRemember(true);
+      seedReviewFields(needsReview);
       setStep(4);
     } else {
       setStep(5);
@@ -356,9 +372,9 @@ export function ImportWizard({
   function seedReviewFields(rest: Transaction[]) {
     if (rest.length > 0) {
       setReviewType(rest[0].type);
-      setReviewVendor(rest[0].vendor);
+      setReviewParentId("__new__");
+      setReviewNewName(cleanVendorName(rest[0].rawDescription));
       setReviewCategory("");
-      setReviewRemember(true);
     } else {
       setStep(5);
     }
@@ -372,36 +388,40 @@ export function ImportWizard({
 
   async function saveAndNextReview() {
     const current = reviewQueue[0];
-    const isPurchase = reviewType === "purchase";
-    const category = isPurchase ? reviewCategory || null : SYSTEM_CATEGORY_FOR_TYPE[reviewType] ?? null;
-    await updateTransaction(current.id, {
-      vendor: reviewVendor,
-      type: reviewType,
-      category,
-      needsReview: false,
-      rememberVendor: isPurchase && reviewRemember && !!reviewCategory,
-    });
-
-    let resolvedCount = 1;
     let rest = reviewQueue.slice(1);
+    let resolvedCount = 1;
 
-    // A freshly-learned vendor rule should immediately catch other
-    // occurrences of the same vendor still waiting in this batch (e.g.
-    // "Storage ABC 12312" then "Storage ABC 43412"), instead of asking the
-    // user to resolve the same vendor over and over in one import.
-    // Only purchases learn rules this way — vendor rules drive spend
-    // categorization, not the other transaction types.
-    if (isPurchase && reviewRemember && reviewCategory && rest.length > 0) {
-      // Pattern from reviewVendor (what's being saved), not the pre-edit
-      // vendor — and prefer vendor over description consistently with how
-      // the server learns/matches rules (see transactions/[id]/route.ts).
-      const pattern = buildVendorRulePattern(reviewVendor || current.rawDescription);
-      const localRules = pattern.length >= 4 ? [...appState.vendorRules, { id: "local", pattern, vendor: reviewVendor, category: reviewCategory }] : appState.vendorRules;
+    if (reviewParentId === "__new__") {
+      if (!reviewNewName.trim() || !reviewCategory) return;
+      try {
+        await updateTransaction(current.id, { type: reviewType, newParentName: reviewNewName.trim(), category: reviewCategory });
+      } catch (err) {
+        // Parent/vendor names are unique — stay on this item so the user
+        // can pick a different name or link to the existing vendor instead.
+        pushToast(err instanceof Error ? err.message : "Failed to create vendor");
+        return;
+      }
+    } else {
+      await updateTransaction(current.id, { type: reviewType, parentId: reviewParentId });
+    }
+
+    // A freshly-created (or newly-linked) vendor should immediately catch
+    // other occurrences of the same vendor still waiting in this batch
+    // (e.g. "Storage ABC 12312" then "Storage ABC 43412"), instead of
+    // asking the user to resolve the same vendor over and over in one
+    // import. Refetch rather than relying on the appState prop, since it
+    // won't reflect this update until the next render.
+    if (rest.length > 0) {
+      const fresh = await fetchState();
       const stillNeedsReview: Transaction[] = [];
       for (const item of rest) {
-        const match = matchVendorRule(item.vendor || item.rawDescription, localRules);
-        if (match) {
-          await updateTransaction(item.id, { vendor: match.vendor, category: match.category, needsReview: false });
+        const cleanedName = cleanVendorName(item.rawDescription);
+        const match = resolveVendor(cleanedName, fresh.childVendors, fresh.parentVendors);
+        if (match.kind === "exact") {
+          await updateTransaction(item.id, { childVendorId: match.childVendorId });
+          resolvedCount++;
+        } else if (match.kind === "fuzzy") {
+          await updateTransaction(item.id, { parentId: match.parentId });
           resolvedCount++;
         } else {
           stillNeedsReview.push(item);
@@ -417,6 +437,7 @@ export function ImportWizard({
   }
 
   const currentReview = reviewQueue[0];
+  const reviewCanSave = reviewParentId !== "__new__" || (!!reviewNewName.trim() && !!reviewCategory);
 
   return (
     <div>
@@ -883,13 +904,12 @@ export function ImportWizard({
               </thead>
               <tbody>
                 {previewRows.map((p, i) => {
-                  const cat = appState.categories.find((c) => c.id === p.category);
                   const typeMeta = TYPE_META[p.type];
                   return (
                     <tr key={i}>
                       <td style={{ padding: "7px 10px", borderBottom: "1px solid var(--border)", fontFamily: "var(--mono)" }}>{fmtDateShort(p.date)}</td>
-                      <td style={{ padding: "7px 10px", borderBottom: "1px solid var(--border)" }}>{p.vendor}</td>
-                      <td style={{ padding: "7px 10px", borderBottom: "1px solid var(--border)" }}>{cat?.name || "Uncategorized"}</td>
+                      <td style={{ padding: "7px 10px", borderBottom: "1px solid var(--border)" }}>{p.vendorName}</td>
+                      <td style={{ padding: "7px 10px", borderBottom: "1px solid var(--border)" }}>{p.categoryName || "Uncategorized"}</td>
                       <td style={{ padding: "7px 10px", borderBottom: "1px solid var(--border)" }}>
                         <Pill color={typeMeta.color}>{typeMeta.label}</Pill>
                       </td>
@@ -931,31 +951,52 @@ export function ImportWizard({
             </div>
             <div style={{ marginBottom: 12 }}>
               <div style={labelStyle}>Vendor</div>
-              <input value={reviewVendor} onChange={(e) => setReviewVendor(e.target.value)} style={{ ...inputStyle, width: "100%", padding: "9px 10px", fontSize: 14 }} />
+              <select
+                value={reviewParentId}
+                onChange={(e) => setReviewParentId(e.target.value)}
+                style={{ ...inputStyle, width: "100%", padding: "9px 10px", fontSize: 14 }}
+              >
+                <option value="__new__">+ Create new vendor…</option>
+                {sortedParents.map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {p.name}
+                  </option>
+                ))}
+              </select>
             </div>
-            {reviewType === "purchase" && (
+            {reviewParentId === "__new__" ? (
               <>
+                <div style={{ marginBottom: 12 }}>
+                  <div style={labelStyle}>New vendor name</div>
+                  <input
+                    value={reviewNewName}
+                    onChange={(e) => setReviewNewName(e.target.value)}
+                    style={{ ...inputStyle, width: "100%", padding: "9px 10px", fontSize: 14 }}
+                  />
+                </div>
                 <div style={{ marginBottom: 14 }}>
                   <div style={labelStyle}>Category</div>
                   <select value={reviewCategory} onChange={(e) => setReviewCategory(e.target.value)} style={{ ...inputStyle, width: "100%", padding: "9px 10px", fontSize: 14 }}>
                     <option value="">— Choose a category —</option>
-                    {spendCategories.map((c) => (
+                    {sortedCategories.map((c) => (
                       <option key={c.id} value={c.id}>
                         {c.name}
                       </option>
                     ))}
                   </select>
                 </div>
-                <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, color: "var(--muted)", cursor: "pointer" }}>
-                  <input type="checkbox" checked={reviewRemember} onChange={(e) => setReviewRemember(e.target.checked)} />
-                  Remember this vendor for future imports
-                </label>
               </>
+            ) : (
+              <div style={{ marginBottom: 14, fontSize: 13, color: "var(--muted)" }}>
+                Category: {categoryById.get(parentById.get(reviewParentId)?.category || "")?.name || "—"}
+              </div>
             )}
           </div>
           <div style={{ display: "flex", gap: 10 }}>
             <SecondaryButton onClick={skipReview}>Skip for now</SecondaryButton>
-            <PrimaryButton onClick={saveAndNextReview}>Save &amp; Next →</PrimaryButton>
+            <PrimaryButton onClick={saveAndNextReview} disabled={!reviewCanSave}>
+              Save &amp; Next →
+            </PrimaryButton>
           </div>
         </div>
       )}

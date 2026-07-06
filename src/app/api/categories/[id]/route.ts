@@ -7,11 +7,11 @@ export async function PATCH(request: Request, ctx: RouteContext<"/api/categories
 
   const { result: category } = await updateState((state) => {
     const category = state.categories.find((c) => c.id === id);
-    if (!category || category.system) return null;
+    if (!category) return null;
     if (typeof body.name === "string") category.name = body.name;
     return category;
   });
 
-  if (!category) return NextResponse.json({ error: "Category not found or not editable" }, { status: 404 });
+  if (!category) return NextResponse.json({ error: "Category not found" }, { status: 404 });
   return NextResponse.json(category);
 }

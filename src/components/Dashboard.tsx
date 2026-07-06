@@ -3,6 +3,7 @@
 import { useMemo, useState } from "react";
 import type { AppState, Transaction } from "@/lib/types";
 import { fmtCurrency, fmtCurrencyWhole, monthKey, monthLabel, quarterKey, yearKey } from "@/lib/format";
+import { categoryIdForTransaction, parentIdForTransaction } from "@/lib/vendors";
 import { Card as PanelCard, SectionTitle, ColorDot, SegmentedControl, inputStyle } from "./ui";
 import type { DrillDown } from "./DrillDownModal";
 
@@ -94,6 +95,8 @@ export function Dashboard({
   const [breakdownMode, setBreakdownMode] = useState<BreakdownMode>("category");
 
   const categoryById = useMemo(() => new Map(appState.categories.map((c) => [c.id, c])), [appState.categories]);
+  const childById = useMemo(() => new Map(appState.childVendors.map((c) => [c.id, c])), [appState.childVendors]);
+  const parentById = useMemo(() => new Map(appState.parentVendors.map((p) => [p.id, p])), [appState.parentVendors]);
 
   const filtered = useMemo(() => {
     const cutoff = rangeCutoff(rangePreset);
@@ -149,7 +152,7 @@ export function Dashboard({
   const breakdownRows = useMemo(() => {
     const totals = new Map<string, number>();
     for (const t of purchases) {
-      const key = breakdownMode === "category" ? t.category : t.vendor;
+      const key = breakdownMode === "category" ? categoryIdForTransaction(t, childById, parentById) : parentIdForTransaction(t, childById);
       if (!key) continue;
       totals.set(key, (totals.get(key) || 0) + t.amount);
     }
@@ -159,39 +162,36 @@ export function Dashboard({
           const cat = categoryById.get(key);
           return { key, name: cat?.name || key, color: cat?.color || "var(--muted)", total };
         }
-        const vendorTxns = purchases.filter((t) => t.vendor === key);
-        const catCounts = new Map<string, number>();
-        for (const t of vendorTxns) {
-          if (t.category) catCounts.set(t.category, (catCounts.get(t.category) || 0) + 1);
-        }
-        const topCat = Array.from(catCounts.entries()).sort((a, b) => b[1] - a[1])[0];
-        const color = topCat ? categoryById.get(topCat[0])?.color || "var(--muted)" : "var(--muted)";
-        return { key, name: key, color, total };
+        // Category lives directly on the parent now — no majority-vote needed.
+        const parent = parentById.get(key);
+        const color = parent ? categoryById.get(parent.category)?.color || "var(--muted)" : "var(--muted)";
+        return { key, name: parent?.name || key, color, total };
       })
       .sort((a, b) => b.total - a.total)
       .slice(0, 8);
     const max = Math.max(1, ...rows.map((r) => r.total));
     return rows.map((r) => ({ ...r, widthPct: (r.total / max) * 100 }));
-  }, [purchases, breakdownMode, categoryById]);
+  }, [purchases, breakdownMode, categoryById, childById, parentById]);
 
   const topMerchants = useMemo(() => {
-    const byVendor = new Map<string, { total: number; count: number; categories: Map<string, number> }>();
+    const byParent = new Map<string, { total: number; count: number }>();
     for (const t of purchases) {
-      const entry = byVendor.get(t.vendor) || { total: 0, count: 0, categories: new Map<string, number>() };
+      const parentId = parentIdForTransaction(t, childById);
+      if (!parentId) continue;
+      const entry = byParent.get(parentId) || { total: 0, count: 0 };
       entry.total += t.amount;
       entry.count += 1;
-      if (t.category) entry.categories.set(t.category, (entry.categories.get(t.category) || 0) + 1);
-      byVendor.set(t.vendor, entry);
+      byParent.set(parentId, entry);
     }
-    return Array.from(byVendor.entries())
-      .map(([vendor, data]) => {
-        const topCat = Array.from(data.categories.entries()).sort((a, b) => b[1] - a[1])[0];
-        const catName = topCat ? categoryById.get(topCat[0])?.name || "Uncategorized" : "Uncategorized";
-        return { vendor, total: data.total, count: data.count, catName };
+    return Array.from(byParent.entries())
+      .map(([parentId, data]) => {
+        const parent = parentById.get(parentId);
+        const catName = parent ? categoryById.get(parent.category)?.name || "Uncategorized" : "Uncategorized";
+        return { parentId, vendor: parent?.name || parentId, total: data.total, count: data.count, catName };
       })
       .sort((a, b) => b.total - a.total)
       .slice(0, 6);
-  }, [purchases, categoryById]);
+  }, [purchases, childById, parentById, categoryById]);
 
   // Same trailing-12-full-months window as the trend chart's Month view —
   // dividing by a fixed 12 (not "months that had spend") so a category with
@@ -201,8 +201,9 @@ export function Dashboard({
     const monthSet = new Set(months);
     const totals = new Map<string, number>();
     for (const t of purchasesForTrend) {
-      if (!t.category || !monthSet.has(monthKey(t.date))) continue;
-      totals.set(t.category, (totals.get(t.category) || 0) + t.amount);
+      const category = categoryIdForTransaction(t, childById, parentById);
+      if (!category || !monthSet.has(monthKey(t.date))) continue;
+      totals.set(category, (totals.get(category) || 0) + t.amount);
     }
     return Array.from(totals.entries())
       .map(([categoryId, total]) => {
@@ -210,7 +211,7 @@ export function Dashboard({
         return { key: categoryId, name: cat?.name || categoryId, color: cat?.color || "var(--muted)", total, avgPerMonth: total / months.length };
       })
       .sort((a, b) => b.avgPerMonth - a.avgPerMonth);
-  }, [purchasesForTrend, categoryById]);
+  }, [purchasesForTrend, categoryById, childById, parentById]);
 
   function purchasesFor(predicate: (t: Transaction) => boolean) {
     return purchases.filter(predicate).sort((a, b) => (a.date < b.date ? 1 : -1));
@@ -331,12 +332,16 @@ export function Dashboard({
             <div
               key={row.key}
               onClick={() => {
-                const txns = purchasesFor((t) => (breakdownMode === "category" ? t.category === row.key : t.vendor === row.key));
+                const txns = purchasesFor((t) =>
+                  breakdownMode === "category"
+                    ? categoryIdForTransaction(t, childById, parentById) === row.key
+                    : parentIdForTransaction(t, childById) === row.key
+                );
                 onDrillDown({
                   title: row.name,
                   subtitle: `${txns.length} purchases`,
                   transactions: txns,
-                  viewAllFilter: breakdownMode === "category" ? { categoryFilter: row.key } : { search: row.key },
+                  viewAllFilter: breakdownMode === "category" ? { categoryFilter: row.key } : { vendorFilter: row.key },
                 });
               }}
               style={{ cursor: "pointer", padding: "9px 0", borderBottom: "1px solid var(--border)" }}
@@ -363,14 +368,14 @@ export function Dashboard({
           <div style={{ marginTop: 14 }}>
             {topMerchants.map((m, i) => (
               <div
-                key={m.vendor}
+                key={m.parentId}
                 onClick={() => {
-                  const txns = purchasesFor((t) => t.vendor === m.vendor);
+                  const txns = purchasesFor((t) => parentIdForTransaction(t, childById) === m.parentId);
                   onDrillDown({
                     title: m.vendor,
                     subtitle: `${txns.length} purchases`,
                     transactions: txns,
-                    viewAllFilter: { search: m.vendor },
+                    viewAllFilter: { vendorFilter: m.parentId },
                   });
                 }}
                 style={{ cursor: "pointer", display: "flex", alignItems: "center", gap: 12, padding: "9px 0", borderBottom: "1px solid var(--border)" }}
@@ -415,7 +420,7 @@ export function Dashboard({
                 key={row.key}
                 onClick={() => {
                   const months = new Set(trailingPeriodKeys("month", 12));
-                  const txns = trendPurchasesFor((t) => t.category === row.key && months.has(monthKey(t.date)));
+                  const txns = trendPurchasesFor((t) => categoryIdForTransaction(t, childById, parentById) === row.key && months.has(monthKey(t.date)));
                   onDrillDown({
                     title: row.name,
                     subtitle: `${txns.length} purchases over the last 12 full months`,
