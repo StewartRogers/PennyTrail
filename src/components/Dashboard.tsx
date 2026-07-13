@@ -97,15 +97,24 @@ export function Dashboard({
   const categoryById = useMemo(() => new Map(appState.categories.map((c) => [c.id, c])), [appState.categories]);
   const childById = useMemo(() => new Map(appState.childVendors.map((c) => [c.id, c])), [appState.childVendors]);
   const parentById = useMemo(() => new Map(appState.parentVendors.map((p) => [p.id, p])), [appState.parentVendors]);
+  // Categories flagged "Exclude from Dashboards" drop their transactions out
+  // of every Dashboard aggregate below — everywhere else (Transactions,
+  // Categories) still shows them in full.
+  const excludedCategoryIds = useMemo(
+    () => new Set(appState.categories.filter((c) => c.excludeFromDashboard).map((c) => c.id)),
+    [appState.categories]
+  );
 
   const filtered = useMemo(() => {
     const cutoff = rangeCutoff(rangePreset);
     return appState.transactions.filter((t) => {
       if (cardFilter !== "all" && t.cardId !== cardFilter) return false;
       if (cutoff && t.date < cutoff) return false;
+      const categoryId = categoryIdForTransaction(t, childById, parentById);
+      if (categoryId && excludedCategoryIds.has(categoryId)) return false;
       return true;
     });
-  }, [appState.transactions, cardFilter, rangePreset]);
+  }, [appState.transactions, cardFilter, rangePreset, childById, parentById, excludedCategoryIds]);
 
   const purchases = useMemo(() => filtered.filter((t) => t.type === "purchase"), [filtered]);
 
@@ -113,8 +122,13 @@ export function Dashboard({
   // of the top-of-page range preset (6mo/12mo/YTD/All) — only the card
   // filter narrows it — so switching presets can't shrink or shift it.
   const purchasesForTrend = useMemo(
-    () => appState.transactions.filter((t) => t.type === "purchase" && (cardFilter === "all" || t.cardId === cardFilter)),
-    [appState.transactions, cardFilter]
+    () =>
+      appState.transactions.filter((t) => {
+        if (t.type !== "purchase" || (cardFilter !== "all" && t.cardId !== cardFilter)) return false;
+        const categoryId = categoryIdForTransaction(t, childById, parentById);
+        return !(categoryId && excludedCategoryIds.has(categoryId));
+      }),
+    [appState.transactions, cardFilter, childById, parentById, excludedCategoryIds]
   );
 
   const kpis = useMemo(() => {
@@ -193,11 +207,11 @@ export function Dashboard({
       .slice(0, 6);
   }, [purchases, childById, parentById, categoryById]);
 
-  // Same trailing-12-full-months window as the trend chart's Month view —
-  // dividing by a fixed 12 (not "months that had spend") so a category with
-  // three $100 months and nine $0 months correctly averages to $25/mo, not $100/mo.
+  // Trailing 6 full months (dividing by a fixed 6, not "months that had
+  // spend") so a category with two $100 months and four $0 months correctly
+  // averages to ~$33/mo, not $100/mo.
   const avgMonthlyByCategory = useMemo(() => {
-    const months = trailingPeriodKeys("month", 12);
+    const months = trailingPeriodKeys("month", 6);
     const monthSet = new Set(months);
     const totals = new Map<string, number>();
     for (const t of purchasesForTrend) {
@@ -398,7 +412,7 @@ export function Dashboard({
       <PanelCard style={{ marginTop: 16 }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14, flexWrap: "wrap", gap: 10 }}>
           <SectionTitle>Avg Monthly Spend by Category</SectionTitle>
-          <div style={{ fontSize: 12, color: "var(--muted)" }}>Last 12 full months</div>
+          <div style={{ fontSize: 12, color: "var(--muted)" }}>Last 6 full months</div>
         </div>
         <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13.5 }}>
           <thead>
@@ -410,7 +424,7 @@ export function Dashboard({
                 Avg / Month
               </th>
               <th style={{ textAlign: "right", padding: "0 0 8px 10px", fontSize: 11.5, fontWeight: 600, color: "var(--muted)", borderBottom: "1px solid var(--border)" }}>
-                Total (12mo)
+                Total (6mo)
               </th>
             </tr>
           </thead>
@@ -419,11 +433,11 @@ export function Dashboard({
               <tr
                 key={row.key}
                 onClick={() => {
-                  const months = new Set(trailingPeriodKeys("month", 12));
+                  const months = new Set(trailingPeriodKeys("month", 6));
                   const txns = trendPurchasesFor((t) => categoryIdForTransaction(t, childById, parentById) === row.key && months.has(monthKey(t.date)));
                   onDrillDown({
                     title: row.name,
-                    subtitle: `${txns.length} purchases over the last 12 full months`,
+                    subtitle: `${txns.length} purchases over the last 6 full months`,
                     transactions: txns,
                     viewAllFilter: { categoryFilter: row.key },
                   });

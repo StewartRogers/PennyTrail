@@ -51,6 +51,11 @@ export function Categories({ appState, onReload }: { appState: AppState; onReloa
     await onReload();
   }
 
+  async function handleToggleExclude(id: string, excludeFromDashboard: boolean) {
+    await updateCategory(id, { excludeFromDashboard });
+    await onReload();
+  }
+
   return (
     <div>
       <PageTitle>Categories</PageTitle>
@@ -89,6 +94,17 @@ export function Categories({ appState, onReload }: { appState: AppState; onReloa
               <div style={{ fontFamily: "var(--mono)", fontSize: 13, color: "var(--muted)", whiteSpace: "nowrap" }}>
                 {fmtCurrency(stats.total)} · {stats.count} txns
               </div>
+              <label
+                title="Leave this category's transactions out of every Dashboard total, trend, and breakdown"
+                style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, color: "var(--muted)", whiteSpace: "nowrap", cursor: "pointer" }}
+              >
+                <input
+                  type="checkbox"
+                  checked={!!c.excludeFromDashboard}
+                  onChange={(e) => handleToggleExclude(c.id, e.target.checked)}
+                />
+                Exclude from Dashboards
+              </label>
             </div>
           );
         })}

@@ -2,7 +2,7 @@
 
 import { useMemo, useState } from "react";
 import type { AppState, Transaction, TxnType } from "@/lib/types";
-import { deleteAllTransactions, updateTransaction } from "@/lib/api";
+import { deleteAllTransactions, deleteTransactions, updateTransaction } from "@/lib/api";
 import { fmtCurrency, fmtDateShort } from "@/lib/format";
 import { TYPE_META, sortCategoriesByName } from "@/lib/categories";
 import { categoryIdForTransaction, parentIdForTransaction, vendorNameForTransaction } from "@/lib/vendors";
@@ -39,6 +39,9 @@ export function Transactions({
   const [visibleCount, setVisibleCount] = useState(PAGE_SIZE);
   const [confirmingDeleteAll, setConfirmingDeleteAll] = useState(false);
   const [deletingAll, setDeletingAll] = useState(false);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [confirmingDeleteSelected, setConfirmingDeleteSelected] = useState(false);
+  const [deletingSelected, setDeletingSelected] = useState(false);
 
   // Apply an incoming filter seed (e.g. from a dashboard drill-down "View all")
   // during render rather than in an effect, since it's adjusting state in
@@ -52,6 +55,8 @@ export function Transactions({
     setTypeFilter(seed.typeFilter ?? "all");
     setVendorFilter(seed.vendorFilter ?? null);
     setVisibleCount(PAGE_SIZE);
+    setSelectedIds(new Set());
+    setConfirmingDeleteSelected(false);
   }
 
   const cardById = useMemo(() => new Map(appState.cards.map((c) => [c.id, c])), [appState.cards]);
@@ -114,6 +119,40 @@ export function Transactions({
       pushToast(`Deleted ${deletedCount} transaction${deletedCount === 1 ? "" : "s"}`);
     } finally {
       setDeletingAll(false);
+    }
+  }
+
+  function toggleSelected(id: string) {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+
+  function toggleSelectAllVisible() {
+    setSelectedIds((prev) => {
+      const allSelected = visible.length > 0 && visible.every((t) => prev.has(t.id));
+      const next = new Set(prev);
+      for (const t of visible) {
+        if (allSelected) next.delete(t.id);
+        else next.add(t.id);
+      }
+      return next;
+    });
+  }
+
+  async function handleDeleteSelected() {
+    setDeletingSelected(true);
+    try {
+      const { deletedCount } = await deleteTransactions(Array.from(selectedIds));
+      await onReload();
+      setSelectedIds(new Set());
+      setConfirmingDeleteSelected(false);
+      pushToast(`Deleted ${deletedCount} transaction${deletedCount === 1 ? "" : "s"}`);
+    } finally {
+      setDeletingSelected(false);
     }
   }
 
@@ -203,14 +242,76 @@ export function Transactions({
         )}
       </div>
 
-      <div style={{ fontSize: 12.5, color: "var(--muted)", marginBottom: 8 }}>
-        {filtered.length} transaction{filtered.length === 1 ? "" : "s"}
+      <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 8, flexWrap: "wrap" }}>
+        <div style={{ fontSize: 12.5, color: "var(--muted)" }}>
+          {filtered.length} transaction{filtered.length === 1 ? "" : "s"}
+        </div>
+        {selectedIds.size > 0 && (
+          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <span style={{ fontSize: 12.5, color: "var(--muted)" }}>{selectedIds.size} selected</span>
+            {confirmingDeleteSelected ? (
+              <>
+                <span style={{ fontSize: 12.5, color: "var(--attention)" }}>Delete {selectedIds.size} transaction{selectedIds.size === 1 ? "" : "s"}?</span>
+                <button
+                  onClick={handleDeleteSelected}
+                  disabled={deletingSelected}
+                  style={{
+                    border: "1px solid var(--attention)",
+                    background: "var(--attention)",
+                    color: "white",
+                    borderRadius: 8,
+                    padding: "5px 10px",
+                    fontSize: 12,
+                    fontWeight: 600,
+                    cursor: deletingSelected ? "not-allowed" : "pointer",
+                    opacity: deletingSelected ? 0.7 : 1,
+                  }}
+                >
+                  {deletingSelected ? "Deleting…" : "Confirm"}
+                </button>
+                <button
+                  onClick={() => setConfirmingDeleteSelected(false)}
+                  disabled={deletingSelected}
+                  style={{ border: "1px solid var(--border)", background: "transparent", color: "var(--text)", borderRadius: 8, padding: "5px 10px", fontSize: 12, fontWeight: 600 }}
+                >
+                  Cancel
+                </button>
+              </>
+            ) : (
+              <>
+                <button
+                  onClick={() => setConfirmingDeleteSelected(true)}
+                  style={{ border: "1px solid var(--attention)", background: "transparent", color: "var(--attention)", borderRadius: 8, padding: "5px 10px", fontSize: 12, fontWeight: 600 }}
+                >
+                  Delete selected…
+                </button>
+                <button
+                  onClick={() => setSelectedIds(new Set())}
+                  style={{ border: "1px solid var(--border)", background: "transparent", color: "var(--muted)", borderRadius: 8, padding: "5px 10px", fontSize: 12, fontWeight: 600 }}
+                >
+                  Clear
+                </button>
+              </>
+            )}
+          </div>
+        )}
       </div>
 
       <div style={{ overflowX: "auto", border: "1px solid var(--border)", borderRadius: 12, background: "var(--panel)" }}>
         <table style={{ borderCollapse: "collapse", width: "100%", fontSize: 13 }}>
           <thead>
             <tr>
+              <th style={{ padding: "10px 12px", borderBottom: "1px solid var(--border)", width: 1 }}>
+                <input
+                  type="checkbox"
+                  checked={visible.length > 0 && visible.every((t) => selectedIds.has(t.id))}
+                  ref={(el) => {
+                    if (el) el.indeterminate = visible.some((t) => selectedIds.has(t.id)) && !visible.every((t) => selectedIds.has(t.id));
+                  }}
+                  onChange={toggleSelectAllVisible}
+                  title="Select all loaded transactions"
+                />
+              </th>
               {["Date", "Card", "Vendor", "Category", "Type", "Amount"].map((h, i) => (
                 <th
                   key={h}
@@ -235,6 +336,9 @@ export function Transactions({
               const typeMeta = TYPE_META[t.type];
               return (
                 <tr key={t.id} style={{ background: t.needsReview ? "oklch(0.58 0.13 35 / 0.06)" : undefined }}>
+                  <td style={{ padding: "9px 12px", borderBottom: "1px solid var(--border)" }}>
+                    <input type="checkbox" checked={selectedIds.has(t.id)} onChange={() => toggleSelected(t.id)} />
+                  </td>
                   <td style={{ padding: "9px 12px", borderBottom: "1px solid var(--border)", fontFamily: "var(--mono)", whiteSpace: "nowrap" }}>
                     {fmtDateShort(t.date)}
                   </td>

@@ -19,6 +19,12 @@ export interface Category {
   id: string;
   name: string;
   color: string;
+  // When true, every transaction whose derived category is this one is
+  // left out of Dashboard aggregates (KPIs, trend, breakdown, top
+  // merchants, avg/month) — but stays fully visible everywhere else
+  // (Transactions, Categories totals). Absent/undefined means included,
+  // so existing stored categories don't need a migration.
+  excludeFromDashboard?: boolean;
 }
 
 export interface Template {

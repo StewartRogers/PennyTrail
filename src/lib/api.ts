@@ -28,7 +28,7 @@ export function addCategory(input: { name: string; color: string }): Promise<Cat
   return request("/api/categories", { method: "POST", body: JSON.stringify(input) });
 }
 
-export function updateCategory(id: string, patch: { name: string }): Promise<Category> {
+export function updateCategory(id: string, patch: { name?: string; excludeFromDashboard?: boolean }): Promise<Category> {
   return request(`/api/categories/${id}`, { method: "PATCH", body: JSON.stringify(patch) });
 }
 
@@ -72,6 +72,10 @@ export function updateTransaction(
 
 export function deleteAllTransactions(): Promise<{ deletedCount: number }> {
   return request("/api/transactions", { method: "DELETE" });
+}
+
+export function deleteTransactions(ids: string[]): Promise<{ deletedCount: number }> {
+  return request("/api/transactions", { method: "DELETE", body: JSON.stringify({ ids }) });
 }
 
 // There is no standalone "create a parent" — a parent is only ever created

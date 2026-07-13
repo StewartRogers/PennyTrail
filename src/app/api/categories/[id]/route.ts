@@ -9,6 +9,7 @@ export async function PATCH(request: Request, ctx: RouteContext<"/api/categories
     const category = state.categories.find((c) => c.id === id);
     if (!category) return null;
     if (typeof body.name === "string") category.name = body.name;
+    if (typeof body.excludeFromDashboard === "boolean") category.excludeFromDashboard = body.excludeFromDashboard;
     return category;
   });
 
