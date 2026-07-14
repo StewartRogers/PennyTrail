@@ -24,6 +24,17 @@ export function cleanVendorName(raw: string | null | undefined): string {
   s = s.replace(/(?<![A-Za-z0-9])-+|-+(?![A-Za-z0-9])/g, " ");
   s = s.replace(/[*#]/g, " ");
   s = s.replace(/\s{2,}/g, " ").trim();
+  // A token with two or more separate digit groups (e.g. "AB1CD2",
+  // "P3ECC5FC58") is a scrambled per-transaction reference code, not a
+  // real word — the same rule coreTokens uses below to ignore these for
+  // matching. Dropping it here too keeps the *displayed* vendor name in
+  // sync with what actually decides vendor identity, so a fresh reference
+  // suffix doesn't spawn a distinct, junk-suffixed vendor on every import.
+  s = s
+    .split(" ")
+    .filter((token) => /^\(\d+\)$/.test(token) || (token.match(/\d+/g) || []).length < 2)
+    .join(" ")
+    .trim();
   if (!s) return String(raw || "").trim();
   if (s === s.toUpperCase()) {
     s = s.toLowerCase().replace(/\b\w/g, (c) => c.toUpperCase());

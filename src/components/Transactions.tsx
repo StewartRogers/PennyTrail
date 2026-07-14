@@ -3,6 +3,7 @@
 import { useMemo, useState } from "react";
 import type { AppState, Transaction, TxnType } from "@/lib/types";
 import { deleteAllTransactions, deleteTransactions, updateTransaction } from "@/lib/api";
+import { cleanVendorName } from "@/lib/classify";
 import { fmtCurrency, fmtDateShort } from "@/lib/format";
 import { TYPE_META, sortCategoriesByName } from "@/lib/categories";
 import { categoryIdForTransaction, parentIdForTransaction, vendorNameForTransaction } from "@/lib/vendors";
@@ -479,7 +480,7 @@ function VendorCell({
 }) {
   const [creating, setCreating] = useState(false);
   const [newName, setNewName] = useState(currentVendorName || "");
-  const [newCategory, setNewCategory] = useState(categories[0]?.id || "");
+  const [newCategory, setNewCategory] = useState("");
 
   if (creating) {
     return (
@@ -491,6 +492,7 @@ function VendorCell({
           style={{ ...inputStyle, fontSize: 12.5, padding: "5px 6px" }}
         />
         <select value={newCategory} onChange={(e) => setNewCategory(e.target.value)} style={{ ...inputStyle, fontSize: 12.5, padding: "5px 6px" }}>
+          <option value="">— Choose a category —</option>
           {categories.map((c) => (
             <option key={c.id} value={c.id}>
               {c.name}
@@ -504,7 +506,17 @@ function VendorCell({
               const ok = await onCreateNew(newName.trim(), newCategory);
               if (ok) setCreating(false);
             }}
-            style={{ border: "1px solid var(--accent)", background: "var(--accent)", color: "white", borderRadius: 6, padding: "4px 8px", fontSize: 12 }}
+            disabled={!newName.trim() || !newCategory}
+            style={{
+              border: "1px solid var(--accent)",
+              background: "var(--accent)",
+              color: "white",
+              borderRadius: 6,
+              padding: "4px 8px",
+              fontSize: 12,
+              cursor: !newName.trim() || !newCategory ? "not-allowed" : "pointer",
+              opacity: !newName.trim() || !newCategory ? 0.6 : 1,
+            }}
           >
             Save
           </button>
@@ -524,7 +536,7 @@ function VendorCell({
       value={currentParentId ?? ""}
       onChange={(e) => {
         if (e.target.value === "__new__") {
-          setNewName(currentVendorName || txn.rawDescription);
+          setNewName(currentVendorName || cleanVendorName(txn.rawDescription));
           setCreating(true);
         } else {
           onReassign(e.target.value);
