@@ -19,19 +19,29 @@ export type Screen = "dashboard" | "import" | "transactions" | "categories" | "v
 function AppInner() {
   const [screen, setScreen] = useState<Screen>("dashboard");
   const [appState, setAppState] = useState<AppState | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [drillDown, setDrillDown] = useState<DrillDown | null>(null);
   const [txnSeed, setTxnSeed] = useState<{ n: number; filter: TxnFilterSeed }>({ n: 0, filter: {} });
 
   const reload = useCallback(async () => {
-    const state = await fetchState();
-    setAppState(state);
+    try {
+      const state = await fetchState();
+      setAppState(state);
+      setLoadError(null);
+    } catch (err) {
+      setLoadError(err instanceof Error ? err.message : "Failed to load data");
+    }
   }, []);
 
   useEffect(() => {
     let cancelled = false;
-    fetchState().then((state) => {
-      if (!cancelled) setAppState(state);
-    });
+    fetchState()
+      .then((state) => {
+        if (!cancelled) setAppState(state);
+      })
+      .catch((err) => {
+        if (!cancelled) setLoadError(err instanceof Error ? err.message : "Failed to load data");
+      });
     return () => {
       cancelled = true;
     };
@@ -42,6 +52,30 @@ function AppInner() {
     setTxnSeed((prev) => ({ n: prev.n + 1, filter }));
     setScreen("transactions");
   }, []);
+
+  if (loadError && !appState) {
+    return (
+      <div
+        style={{
+          minHeight: "100vh",
+          display: "flex",
+          flexDirection: "column",
+          gap: 12,
+          alignItems: "center",
+          justifyContent: "center",
+          color: "var(--muted)",
+        }}
+      >
+        <div>Couldn&apos;t load your data: {loadError}</div>
+        <button
+          onClick={() => reload()}
+          style={{ border: "1px solid var(--border)", background: "transparent", color: "var(--text)", borderRadius: 8, padding: "8px 14px", fontSize: 13 }}
+        >
+          Retry
+        </button>
+      </div>
+    );
+  }
 
   if (!appState) {
     return (

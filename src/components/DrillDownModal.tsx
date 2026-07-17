@@ -2,7 +2,7 @@
 
 import type { Card, ChildVendor, Transaction } from "@/lib/types";
 import { fmtCurrency, fmtDateShort } from "@/lib/format";
-import { vendorNameForTransaction } from "@/lib/vendors";
+import { netAmountForTransaction, vendorNameForTransaction } from "@/lib/vendors";
 import type { TxnFilterSeed } from "./Transactions";
 
 export interface DrillDown {
@@ -99,7 +99,7 @@ export function DrillDownModal({
                   </div>
                 </div>
                 <div style={{ fontFamily: "var(--mono)", fontWeight: 600, fontSize: 13.5, flexShrink: 0 }}>
-                  {fmtCurrency(t.amount)}
+                  {fmtCurrency(netAmountForTransaction(t))}
                 </div>
               </div>
             );

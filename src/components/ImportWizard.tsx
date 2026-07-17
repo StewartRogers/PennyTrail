@@ -184,7 +184,7 @@ export function ImportWizard({
   const [reviewParentId, setReviewParentId] = useState<string>("__new__");
   const [reviewNewName, setReviewNewName] = useState("");
   const [reviewCategory, setReviewCategory] = useState("");
-  const [summary, setSummary] = useState({ total: 0, auto: 0, review: 0 });
+  const [summary, setSummary] = useState({ total: 0, auto: 0, review: 0, skipped: 0 });
 
   const selectedCard = appState.cards.find((c) => c.id === cardId) || null;
   const sortedCategories = useMemo(() => sortCategoriesByName(appState.categories), [appState.categories]);
@@ -1006,6 +1006,14 @@ export function ImportWizard({
           <div style={{ fontSize: 20, fontWeight: 700, marginBottom: 10 }}>Import complete</div>
           <div style={{ color: "var(--muted)", fontSize: 14, marginBottom: 18 }}>
             Imported {summary.total} transactions. {summary.auto} auto-classified, {reviewResolvedCount} resolved in review.
+            {summary.skipped > 0 && (
+              <>
+                {" "}
+                <span style={{ color: "var(--attention)" }}>
+                  {summary.skipped} row{summary.skipped === 1 ? "" : "s"} skipped (missing or invalid amount).
+                </span>
+              </>
+            )}
           </div>
           <div style={{ display: "flex", gap: 10 }}>
             <SecondaryButton onClick={resetWizard}>Import another file</SecondaryButton>

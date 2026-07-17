@@ -3,7 +3,7 @@ import { updateState } from "@/lib/store";
 
 export async function PATCH(request: Request, ctx: RouteContext<"/api/categories/[id]">) {
   const { id } = await ctx.params;
-  const body = await request.json();
+  const body = await request.json().catch(() => ({}));
 
   const { result: category } = await updateState((state) => {
     const category = state.categories.find((c) => c.id === id);

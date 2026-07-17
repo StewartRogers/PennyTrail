@@ -14,6 +14,14 @@ export function categoryIdForTransaction(
   return parentById.get(child.parentId)?.category ?? null;
 }
 
+// Spend actually kept after any reimbursement — this is what every total
+// (dashboard KPIs, trend, breakdown, category totals) should sum, not the
+// raw charge amount, so a partially-reimbursed purchase still counts for
+// what wasn't recovered.
+export function netAmountForTransaction(txn: Pick<Transaction, "amount" | "reimbursedAmount">): number {
+  return txn.amount - (txn.reimbursedAmount || 0);
+}
+
 export function vendorNameForTransaction(txn: Pick<Transaction, "childVendorId">, childById: Map<string, ChildVendor>): string | null {
   if (!txn.childVendorId) return null;
   return childById.get(txn.childVendorId)?.rawName ?? null;

@@ -15,7 +15,7 @@ const CARD_COLORS = [
 ];
 
 export async function POST(request: Request) {
-  const body = await request.json();
+  const body = await request.json().catch(() => ({}));
   const name = String(body.name || "").trim();
   const bank = String(body.bank || "").trim();
   const last4 = String(body.last4 || "").trim();

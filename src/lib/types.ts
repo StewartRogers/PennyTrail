@@ -83,6 +83,13 @@ export interface Transaction {
   // there's no denormalized copy that can go stale or disagree with itself.
   childVendorId: string | null;
   needsReview: boolean;
+  // Amount recovered afterward (employer/insurance reimbursement) that never
+  // shows up as its own card transaction — e.g. a future statement credit
+  // lumped in with unrelated spend. Optional and defaults to "not
+  // reimbursed" so existing stored transactions don't need a migration.
+  // Always <= amount; partial reimbursement is expected (see
+  // netAmountForTransaction in vendors.ts).
+  reimbursedAmount?: number;
 }
 
 export interface AppState {

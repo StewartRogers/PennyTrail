@@ -6,7 +6,7 @@ import { deleteAllTransactions, deleteTransactions, updateTransaction } from "@/
 import { cleanVendorName } from "@/lib/classify";
 import { fmtCurrency, fmtDateShort } from "@/lib/format";
 import { TYPE_META, sortCategoriesByName } from "@/lib/categories";
-import { categoryIdForTransaction, parentIdForTransaction, vendorNameForTransaction } from "@/lib/vendors";
+import { categoryIdForTransaction, netAmountForTransaction, parentIdForTransaction, vendorNameForTransaction } from "@/lib/vendors";
 import { PageTitle, ColorDot, inputStyle, SecondaryButton } from "./ui";
 import { useToast } from "./ToastContext";
 
@@ -89,8 +89,12 @@ export function Transactions({
 
   async function commitVendorReassign(t: Transaction, parentId: string) {
     if (parentId === parentIdForTransaction(t, childById)) return;
-    await updateTransaction(t.id, { parentId });
-    await onReload();
+    try {
+      await updateTransaction(t.id, { parentId });
+      await onReload();
+    } catch (err) {
+      pushToast(err instanceof Error ? err.message : "Failed to reassign vendor");
+    }
   }
 
   async function commitNewVendor(t: Transaction, name: string, category: string): Promise<boolean> {
@@ -107,8 +111,25 @@ export function Transactions({
 
   async function commitType(t: Transaction, type: TxnType) {
     if (type === t.type) return;
-    await updateTransaction(t.id, { type });
-    await onReload();
+    try {
+      await updateTransaction(t.id, { type });
+      await onReload();
+    } catch (err) {
+      pushToast(err instanceof Error ? err.message : "Failed to update transaction type");
+    }
+  }
+
+  async function commitReimbursedAmount(t: Transaction, raw: string) {
+    const trimmed = raw.trim();
+    const next = trimmed === "" ? null : Math.max(0, Math.min(t.amount, Number(trimmed)));
+    if (trimmed !== "" && Number.isNaN(next)) return;
+    if ((next ?? undefined) === (t.reimbursedAmount ?? undefined)) return;
+    try {
+      await updateTransaction(t.id, { reimbursedAmount: next });
+      await onReload();
+    } catch (err) {
+      pushToast(err instanceof Error ? err.message : "Failed to update reimbursed amount");
+    }
   }
 
   async function handleDeleteAll() {
@@ -118,6 +139,8 @@ export function Transactions({
       await onReload();
       setConfirmingDeleteAll(false);
       pushToast(`Deleted ${deletedCount} transaction${deletedCount === 1 ? "" : "s"}`);
+    } catch (err) {
+      pushToast(err instanceof Error ? err.message : "Failed to delete transactions");
     } finally {
       setDeletingAll(false);
     }
@@ -152,6 +175,8 @@ export function Transactions({
       setSelectedIds(new Set());
       setConfirmingDeleteSelected(false);
       pushToast(`Deleted ${deletedCount} transaction${deletedCount === 1 ? "" : "s"}`);
+    } catch (err) {
+      pushToast(err instanceof Error ? err.message : "Failed to delete selected transactions");
     } finally {
       setDeletingSelected(false);
     }
@@ -386,8 +411,8 @@ export function Transactions({
                       ))}
                     </select>
                   </td>
-                  <td style={{ padding: "9px 12px", borderBottom: "1px solid var(--border)", textAlign: "right", fontFamily: "var(--mono)", fontWeight: 500 }}>
-                    {fmtCurrency(t.amount)}
+                  <td style={{ padding: "9px 12px", borderBottom: "1px solid var(--border)", textAlign: "right" }}>
+                    <AmountCell txn={t} onCommitReimbursed={(raw) => commitReimbursedAmount(t, raw)} />
                   </td>
                 </tr>
               );
@@ -457,6 +482,44 @@ export function Transactions({
           )}
         </div>
       )}
+    </div>
+  );
+}
+
+function AmountCell({
+  txn,
+  onCommitReimbursed,
+}: {
+  txn: Transaction;
+  onCommitReimbursed: (raw: string) => void;
+}) {
+  const hasReimbursement = !!txn.reimbursedAmount;
+  const net = netAmountForTransaction(txn);
+  return (
+    <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 2 }}>
+      <div style={{ fontFamily: "var(--mono)", fontWeight: 500 }}>
+        {fmtCurrency(hasReimbursement ? net : txn.amount)}
+      </div>
+      {hasReimbursement && (
+        <div style={{ fontSize: 11, color: "var(--muted)", textDecoration: "line-through" }}>{fmtCurrency(txn.amount)}</div>
+      )}
+      <label
+        title="Amount recovered later (e.g. employer/insurance reimbursement) that won't show up as its own transaction"
+        style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 11, color: "var(--muted)", whiteSpace: "nowrap" }}
+      >
+        Reimb.
+        <input
+          type="number"
+          step="0.01"
+          min={0}
+          max={txn.amount}
+          defaultValue={txn.reimbursedAmount ?? ""}
+          placeholder="0.00"
+          onBlur={(e) => onCommitReimbursed(e.target.value)}
+          className="inline-editable"
+          style={{ width: 56, fontSize: 11, padding: "3px 5px", borderRadius: 6, textAlign: "right", background: "transparent" }}
+        />
+      </label>
     </div>
   );
 }

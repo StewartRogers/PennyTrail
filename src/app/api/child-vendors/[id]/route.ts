@@ -3,7 +3,7 @@ import { updateState } from "@/lib/store";
 
 export async function PATCH(request: Request, ctx: RouteContext<"/api/child-vendors/[id]">) {
   const { id } = await ctx.params;
-  const body = await request.json();
+  const body = await request.json().catch(() => ({}));
   const parentId = String(body.parentId || "");
   if (!parentId) return NextResponse.json({ error: "parentId is required" }, { status: 400 });
 

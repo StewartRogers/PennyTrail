@@ -6,7 +6,7 @@ import { updateState } from "@/lib/store";
 // parent is deleted. No transaction needs touching — category is derived
 // live through the child's parentId.
 export async function POST(request: Request) {
-  const body = await request.json();
+  const body = await request.json().catch(() => ({}));
   const fromId = String(body.fromId || "");
   const intoId = String(body.intoId || "");
   if (!fromId || !intoId || fromId === intoId) {

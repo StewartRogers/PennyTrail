@@ -4,7 +4,7 @@ import { uid } from "@/lib/id";
 import type { Category } from "@/lib/types";
 
 export async function POST(request: Request) {
-  const body = await request.json();
+  const body = await request.json().catch(() => ({}));
   const name = String(body.name || "").trim();
   const color = String(body.color || "").trim();
   if (!name || !color) {

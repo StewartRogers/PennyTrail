@@ -3,7 +3,7 @@
 import { useMemo, useState } from "react";
 import type { AppState, Transaction } from "@/lib/types";
 import { fmtCurrency, fmtCurrencyWhole, monthKey, monthLabel, quarterKey, yearKey } from "@/lib/format";
-import { categoryIdForTransaction, parentIdForTransaction } from "@/lib/vendors";
+import { categoryIdForTransaction, netAmountForTransaction, parentIdForTransaction } from "@/lib/vendors";
 import { Card as PanelCard, SectionTitle, ColorDot, SegmentedControl, inputStyle } from "./ui";
 import type { DrillDown } from "./DrillDownModal";
 
@@ -132,7 +132,7 @@ export function Dashboard({
   );
 
   const kpis = useMemo(() => {
-    const spend = purchases.reduce((sum, t) => sum + t.amount, 0);
+    const spend = purchases.reduce((sum, t) => sum + netAmountForTransaction(t), 0);
     const payments = filtered.filter((t) => t.type === "payment").reduce((sum, t) => sum + t.amount, 0);
     const cashback = filtered.filter((t) => t.type === "cashback").reduce((sum, t) => sum + t.amount, 0);
     const monthsInData = new Set(purchases.map((t) => monthKey(t.date)));
@@ -146,7 +146,7 @@ export function Dashboard({
     const totals = new Map<string, number>();
     for (const t of purchasesForTrend) {
       const key = keyFn(t.date);
-      totals.set(key, (totals.get(key) || 0) + t.amount);
+      totals.set(key, (totals.get(key) || 0) + netAmountForTransaction(t));
     }
     const keys = trailingPeriodKeys(trendGroup, TREND_BUCKET_COUNT[trendGroup]);
     return keys.map((key) => ({ key, label: labelFn(key), total: totals.get(key) || 0 }));
@@ -168,7 +168,7 @@ export function Dashboard({
     for (const t of purchases) {
       const key = breakdownMode === "category" ? categoryIdForTransaction(t, childById, parentById) : parentIdForTransaction(t, childById);
       if (!key) continue;
-      totals.set(key, (totals.get(key) || 0) + t.amount);
+      totals.set(key, (totals.get(key) || 0) + netAmountForTransaction(t));
     }
     const rows = Array.from(totals.entries())
       .map(([key, total]) => {
@@ -193,7 +193,7 @@ export function Dashboard({
       const parentId = parentIdForTransaction(t, childById);
       if (!parentId) continue;
       const entry = byParent.get(parentId) || { total: 0, count: 0 };
-      entry.total += t.amount;
+      entry.total += netAmountForTransaction(t);
       entry.count += 1;
       byParent.set(parentId, entry);
     }
@@ -217,7 +217,7 @@ export function Dashboard({
     for (const t of purchasesForTrend) {
       const category = categoryIdForTransaction(t, childById, parentById);
       if (!category || !monthSet.has(monthKey(t.date))) continue;
-      totals.set(category, (totals.get(category) || 0) + t.amount);
+      totals.set(category, (totals.get(category) || 0) + netAmountForTransaction(t));
     }
     return Array.from(totals.entries())
       .map(([categoryId, total]) => {
@@ -228,11 +228,11 @@ export function Dashboard({
   }, [purchasesForTrend, categoryById, childById, parentById]);
 
   function purchasesFor(predicate: (t: Transaction) => boolean) {
-    return purchases.filter(predicate).sort((a, b) => (a.date < b.date ? 1 : -1));
+    return purchases.filter(predicate).sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : 0));
   }
 
   function trendPurchasesFor(predicate: (t: Transaction) => boolean) {
-    return purchasesForTrend.filter(predicate).sort((a, b) => (a.date < b.date ? 1 : -1));
+    return purchasesForTrend.filter(predicate).sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : 0));
   }
 
   return (

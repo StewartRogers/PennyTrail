@@ -4,6 +4,7 @@ import { useMemo, useState } from "react";
 import type { AppState, Network } from "@/lib/types";
 import { addCard, updateCard } from "@/lib/api";
 import { fmtCurrency } from "@/lib/format";
+import { netAmountForTransaction } from "@/lib/vendors";
 import { useToast } from "./ToastContext";
 import { PageTitle, PrimaryButton, inputStyle } from "./ui";
 
@@ -40,7 +41,7 @@ export function Cards({ appState, onReload }: { appState: AppState; onReload: ()
     const map = new Map<string, number>();
     for (const t of appState.transactions) {
       if (t.type !== "purchase") continue;
-      map.set(t.cardId, (map.get(t.cardId) || 0) + t.amount);
+      map.set(t.cardId, (map.get(t.cardId) || 0) + netAmountForTransaction(t));
     }
     return map;
   }, [appState.transactions]);
@@ -48,13 +49,26 @@ export function Cards({ appState, onReload }: { appState: AppState; onReload: ()
   async function handleAdd() {
     const trimmedName = name.trim();
     if (!trimmedName) return;
-    await addCard({ name: trimmedName, bank: bank.trim(), last4: last4.trim(), network });
-    setName("");
-    setBank("");
-    setLast4("");
-    setNetwork("Visa");
-    await onReload();
-    pushToast(`Added card "${trimmedName}"`);
+    try {
+      await addCard({ name: trimmedName, bank: bank.trim(), last4: last4.trim(), network });
+      setName("");
+      setBank("");
+      setLast4("");
+      setNetwork("Visa");
+      await onReload();
+      pushToast(`Added card "${trimmedName}"`);
+    } catch (err) {
+      pushToast(err instanceof Error ? err.message : "Failed to add card");
+    }
+  }
+
+  async function commitCardField(id: string, patch: Parameters<typeof updateCard>[1]) {
+    try {
+      await updateCard(id, patch);
+      await onReload();
+    } catch (err) {
+      pushToast(err instanceof Error ? err.message : "Failed to update card");
+    }
   }
 
   return (
@@ -79,7 +93,7 @@ export function Cards({ appState, onReload }: { appState: AppState; onReload: ()
             <input
               defaultValue={c.name}
               onBlur={(e) => {
-                if (e.target.value.trim() && e.target.value !== c.name) updateCard(c.id, { name: e.target.value.trim() }).then(onReload);
+                if (e.target.value.trim() && e.target.value !== c.name) commitCardField(c.id, { name: e.target.value.trim() });
               }}
               className="inline-editable"
               title="Click to rename"
@@ -96,7 +110,7 @@ export function Cards({ appState, onReload }: { appState: AppState; onReload: ()
             <input
               defaultValue={c.bank}
               onBlur={(e) => {
-                if (e.target.value !== c.bank) updateCard(c.id, { bank: e.target.value.trim() }).then(onReload);
+                if (e.target.value !== c.bank) commitCardField(c.id, { bank: e.target.value.trim() });
               }}
               className="inline-editable"
               title="Click to edit bank name"
@@ -110,7 +124,7 @@ export function Cards({ appState, onReload }: { appState: AppState; onReload: ()
                 borderRadius: 6,
               }}
             />
-            <NetworkToggle value={c.network} onChange={(n) => updateCard(c.id, { network: n }).then(onReload)} />
+            <NetworkToggle value={c.network} onChange={(n) => commitCardField(c.id, { network: n })} />
             <div style={{ fontFamily: "var(--mono)", fontSize: 13, color: "var(--muted)" }}>····{c.last4}</div>
             <div style={{ fontFamily: "var(--mono)", fontSize: 13, fontWeight: 600, marginLeft: "auto" }}>
               {fmtCurrency(totals.get(c.id) || 0)} spent

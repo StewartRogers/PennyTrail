@@ -85,40 +85,60 @@ export function VendorMappings({ appState, onReload }: { appState: AppState; onR
   }
 
   async function handleCategoryChange(parentId: string, category: string) {
-    await updateParentVendor(parentId, { category });
-    await onReload();
-    pushToast(`Category updated to "${categoryById.get(category)?.name ?? category}"`);
+    try {
+      await updateParentVendor(parentId, { category });
+      await onReload();
+      pushToast(`Category updated to "${categoryById.get(category)?.name ?? category}"`);
+    } catch (err) {
+      pushToast(err instanceof Error ? err.message : "Failed to update category");
+    }
   }
 
   async function handleDelete(parentId: string, name: string) {
-    const { removedChildren, affectedCount } = await deleteParentVendor(parentId);
-    await onReload();
-    setConfirmingDeleteId(null);
-    const parts = [`Removed "${name}"`];
-    if (removedChildren > 0) parts.push(`${removedChildren} vendor name${removedChildren === 1 ? "" : "s"} with it`);
-    if (affectedCount > 0) parts.push(`${affectedCount} transaction${affectedCount === 1 ? "" : "s"} now need review`);
-    pushToast(parts.join(" — "));
+    try {
+      const { removedChildren, affectedCount } = await deleteParentVendor(parentId);
+      await onReload();
+      setConfirmingDeleteId(null);
+      const parts = [`Removed "${name}"`];
+      if (removedChildren > 0) parts.push(`${removedChildren} vendor name${removedChildren === 1 ? "" : "s"} with it`);
+      if (affectedCount > 0) parts.push(`${affectedCount} transaction${affectedCount === 1 ? "" : "s"} now need review`);
+      pushToast(parts.join(" — "));
+    } catch (err) {
+      pushToast(err instanceof Error ? err.message : "Failed to remove vendor");
+    }
   }
 
   async function handleMerge(fromId: string, fromName: string, intoId: string) {
-    const { movedCount } = await mergeParentVendors(fromId, intoId);
-    await onReload();
-    setMergingId(null);
-    pushToast(`Merged "${fromName}" — moved ${movedCount} vendor name${movedCount === 1 ? "" : "s"}`);
+    try {
+      const { movedCount } = await mergeParentVendors(fromId, intoId);
+      await onReload();
+      setMergingId(null);
+      pushToast(`Merged "${fromName}" — moved ${movedCount} vendor name${movedCount === 1 ? "" : "s"}`);
+    } catch (err) {
+      pushToast(err instanceof Error ? err.message : "Failed to merge vendors");
+    }
   }
 
   async function handleMoveChild(childId: string, parentId: string) {
-    await moveChildVendor(childId, parentId);
-    await onReload();
+    try {
+      await moveChildVendor(childId, parentId);
+      await onReload();
+    } catch (err) {
+      pushToast(err instanceof Error ? err.message : "Failed to move vendor");
+    }
   }
 
   async function handleDeleteChild(childId: string, rawName: string) {
-    const { affectedCount, parentRemoved } = await deleteChildVendor(childId);
-    await onReload();
-    const parts = [`Removed "${rawName}"`];
-    if (parentRemoved) parts.push("it was the last vendor for its parent, so that parent was removed too");
-    if (affectedCount > 0) parts.push(`${affectedCount} transaction${affectedCount === 1 ? "" : "s"} now need review`);
-    pushToast(parts.join(" — "));
+    try {
+      const { affectedCount, parentRemoved } = await deleteChildVendor(childId);
+      await onReload();
+      const parts = [`Removed "${rawName}"`];
+      if (parentRemoved) parts.push("it was the last vendor for its parent, so that parent was removed too");
+      if (affectedCount > 0) parts.push(`${affectedCount} transaction${affectedCount === 1 ? "" : "s"} now need review`);
+      pushToast(parts.join(" — "));
+    } catch (err) {
+      pushToast(err instanceof Error ? err.message : "Failed to remove vendor name");
+    }
   }
 
   return (

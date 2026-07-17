@@ -9,7 +9,7 @@ const VALID_TYPES: TxnType[] = ["purchase", "payment", "credit", "cashback", "fe
 
 export async function PATCH(request: Request, ctx: RouteContext<"/api/transactions/[id]">) {
   const { id } = await ctx.params;
-  const body = await request.json();
+  const body = await request.json().catch(() => ({}));
 
   const { result } = await updateState((state) => {
     const txn = state.transactions.find((t) => t.id === id);
@@ -64,6 +64,18 @@ export async function PATCH(request: Request, ctx: RouteContext<"/api/transactio
 
     if (typeof body.needsReview === "boolean") txn.needsReview = body.needsReview;
 
+    if (body.reimbursedAmount !== undefined) {
+      if (body.reimbursedAmount === null) {
+        delete txn.reimbursedAmount;
+      } else {
+        if (typeof body.reimbursedAmount !== "number" || !Number.isFinite(body.reimbursedAmount) || body.reimbursedAmount < 0) {
+          return { error: "invalid_reimbursed_amount" as const };
+        }
+        if (body.reimbursedAmount > txn.amount) return { error: "reimbursed_amount_too_large" as const };
+        txn.reimbursedAmount = body.reimbursedAmount;
+      }
+    }
+
     return { txn };
   });
 
@@ -74,6 +86,8 @@ export async function PATCH(request: Request, ctx: RouteContext<"/api/transactio
     if (result.error === "duplicate_parent") return NextResponse.json({ error: "A parent with this name already exists" }, { status: 409 });
     if (result.error === "duplicate_vendor")
       return NextResponse.json({ error: "A vendor for this exact description already exists under a different parent" }, { status: 409 });
+    if (result.error === "invalid_reimbursed_amount") return NextResponse.json({ error: "Reimbursed amount must be a non-negative number" }, { status: 400 });
+    if (result.error === "reimbursed_amount_too_large") return NextResponse.json({ error: "Reimbursed amount can't exceed the transaction amount" }, { status: 400 });
     return NextResponse.json({ error: "Unknown category" }, { status: 400 });
   }
   return NextResponse.json(result.txn);

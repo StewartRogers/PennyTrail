@@ -4,7 +4,7 @@ import { useMemo, useState } from "react";
 import type { AppState } from "@/lib/types";
 import { addCategory, updateCategory } from "@/lib/api";
 import { CATEGORY_PALETTE, sortCategoriesByName } from "@/lib/categories";
-import { categoryIdForTransaction } from "@/lib/vendors";
+import { categoryIdForTransaction, netAmountForTransaction } from "@/lib/vendors";
 import { fmtCurrency } from "@/lib/format";
 import { useToast } from "./ToastContext";
 import { PageTitle, PrimaryButton, inputStyle } from "./ui";
@@ -23,7 +23,7 @@ export function Categories({ appState, onReload }: { appState: AppState; onReloa
       const category = categoryIdForTransaction(t, childById, parentById);
       if (!category) continue;
       const entry = map.get(category) || { total: 0, count: 0 };
-      entry.total += t.amount;
+      entry.total += netAmountForTransaction(t);
       entry.count += 1;
       map.set(category, entry);
     }
@@ -39,21 +39,33 @@ export function Categories({ appState, onReload }: { appState: AppState; onReloa
   async function handleAdd() {
     const name = newName.trim();
     if (!name) return;
-    await addCategory({ name, color: swatchColor });
-    setNewName("");
-    setSelectedColor(null);
-    await onReload();
-    pushToast(`Added category "${name}"`);
+    try {
+      await addCategory({ name, color: swatchColor });
+      setNewName("");
+      setSelectedColor(null);
+      await onReload();
+      pushToast(`Added category "${name}"`);
+    } catch (err) {
+      pushToast(err instanceof Error ? err.message : "Failed to add category");
+    }
   }
 
   async function handleRename(id: string, name: string) {
-    await updateCategory(id, { name });
-    await onReload();
+    try {
+      await updateCategory(id, { name });
+      await onReload();
+    } catch (err) {
+      pushToast(err instanceof Error ? err.message : "Failed to rename category");
+    }
   }
 
   async function handleToggleExclude(id: string, excludeFromDashboard: boolean) {
-    await updateCategory(id, { excludeFromDashboard });
-    await onReload();
+    try {
+      await updateCategory(id, { excludeFromDashboard });
+      await onReload();
+    } catch (err) {
+      pushToast(err instanceof Error ? err.message : "Failed to update category");
+    }
   }
 
   return (

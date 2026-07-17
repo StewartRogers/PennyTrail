@@ -55,7 +55,7 @@ export interface ImportRow {
 export function importTransactions(
   cardId: string,
   rows: ImportRow[]
-): Promise<{ transactions: Transaction[]; counts: { total: number; auto: number; review: number } }> {
+): Promise<{ transactions: Transaction[]; counts: { total: number; auto: number; review: number; skipped: number } }> {
   return request("/api/transactions/import", { method: "POST", body: JSON.stringify({ cardId, rows }) });
 }
 
@@ -65,6 +65,8 @@ export function updateTransaction(
     parentId?: string;
     newParentName?: string;
     category?: string;
+    // null clears any existing reimbursement
+    reimbursedAmount?: number | null;
   }
 ): Promise<Transaction> {
   return request(`/api/transactions/${id}`, { method: "PATCH", body: JSON.stringify(patch) });

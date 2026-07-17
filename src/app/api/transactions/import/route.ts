@@ -16,7 +16,7 @@ interface ImportRow {
 }
 
 export async function POST(request: Request) {
-  const body = await request.json();
+  const body = await request.json().catch(() => ({}));
   const cardId = String(body.cardId || "");
   const rows: ImportRow[] = Array.isArray(body.rows) ? body.rows : [];
 
@@ -33,7 +33,15 @@ export async function POST(request: Request) {
     }
 
     const created: Transaction[] = [];
+    let skipped = 0;
     for (const row of rows) {
+      if (typeof row.amount !== "number" || !Number.isFinite(row.amount)) {
+        // A bad/missing amount (e.g. an unparseable CSV cell) would otherwise
+        // serialize as `null` and permanently corrupt this transaction —
+        // drop the row instead and surface the count to the caller.
+        skipped++;
+        continue;
+      }
       const type = classifyTransactionType(row.rawDescription, row.isCharge, row.typeText, row.vendorOverride);
       const cleanedName = cleanVendorName(row.vendorOverride || row.rawDescription);
 
@@ -87,12 +95,12 @@ export async function POST(request: Request) {
       state.transactions.push(txn);
       created.push(txn);
     }
-    state.transactions.sort((a, b) => (a.date < b.date ? 1 : -1));
+    state.transactions.sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : 0));
 
     const auto = created.filter((t) => !t.needsReview).length;
     const review = created.filter((t) => t.needsReview).length;
 
-    return { transactions: created, counts: { total: created.length, auto, review } };
+    return { transactions: created, counts: { total: created.length, auto, review, skipped } };
   });
 
   if ("error" in result) {

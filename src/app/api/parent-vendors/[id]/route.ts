@@ -4,7 +4,7 @@ import { findParentByName } from "@/lib/vendors";
 
 export async function PATCH(request: Request, ctx: RouteContext<"/api/parent-vendors/[id]">) {
   const { id } = await ctx.params;
-  const body = await request.json();
+  const body = await request.json().catch(() => ({}));
 
   const hasName = typeof body.name === "string" && !!body.name.trim();
   const hasCategory = typeof body.category === "string" && !!body.category;

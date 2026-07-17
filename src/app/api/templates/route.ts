@@ -4,8 +4,8 @@ import { uid } from "@/lib/id";
 import type { Template } from "@/lib/types";
 
 export async function POST(request: Request) {
-  const body = await request.json();
-  if (!body.name || !body.bank) {
+  const body = await request.json().catch(() => null);
+  if (typeof body?.name !== "string" || !body.name || typeof body?.bank !== "string" || !body.bank) {
     return NextResponse.json({ error: "Template name and bank are required" }, { status: 400 });
   }
 
