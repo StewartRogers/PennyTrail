@@ -30,6 +30,28 @@ The dev server runs on **http://localhost:3607** (not the Next.js default
 3000 — see `scripts` in `package.json`). Production mode (`npm run build &&
 npm run start`) runs on **http://localhost:2607**.
 
+## Testing
+
+```bash
+npm test          # run the suite once
+npm run test:watch  # re-run on file changes
+```
+
+[Vitest](https://vitest.dev) covers three layers, under `tests/`:
+
+- `tests/lib/` — unit tests for the framework-agnostic business logic
+  (CSV parsing, vendor classification/matching, formatting).
+- `tests/api/` — integration tests for the Route Handlers, calling the
+  exported handler functions directly against a scratch directory (via
+  `PENNYTRAIL_DATA_DIR`, a fresh temp dir per test) — no real `data/store.json`
+  is ever touched.
+- `tests/components/` — React Testing Library tests for a few
+  regression-prone screens.
+
+`test:server` (the `next dev -p 4607` alias) is unrelated — that's for
+manually driving the app in a browser against a scratch data dir, not for
+running the automated suite.
+
 ## Data & persistence
 
 All app data (cards, categories, import templates, vendor rules,
@@ -75,10 +97,13 @@ in the post-import summary.
 
 ## Maintenance notes
 
-- `package.json` has an `overrides.postcss` pin (`^8.5.10`). This fixes a
-  moderate-severity advisory in a copy of `postcss` bundled inside `next`'s
-  own dependencies. **Do not run `npm audit fix --force`** — as of this
-  writing, npm's own auto-fix for that advisory is to downgrade `next` to
+- `package.json` has `overrides.postcss` (`^8.5.10`) and `overrides.sharp`
+  (`^0.35.3`) pins. The `postcss` one fixes a moderate-severity advisory in a
+  copy bundled inside `next`'s own dependencies. The `sharp` one fixes a
+  libvips CVE in `next`'s optional image-optimization dependency, which
+  `next` itself pins to a range (`^0.34.5`) that excludes the patched
+  version. **Do not run `npm audit fix --force`** — as of this writing,
+  npm's own auto-fix for the `postcss` advisory is to downgrade `next` to
   `9.3.3`, a multi-major-version regression, not an actual fix. If you hit
   new audit findings, check what the suggested fix actually changes before
   applying it.

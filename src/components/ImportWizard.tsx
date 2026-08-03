@@ -97,9 +97,11 @@ function previewClassification(row: ParsedRow, appState: AppState, categories: C
     return { type, vendorName: cleanedName, categoryName, needsReview: false };
   }
   if (match.kind === "fuzzy") {
+    // Mirrors the import route: a fuzzy match still needs review, so this
+    // preview's auto/review split matches what actually happens on import.
     const parent = appState.parentVendors.find((p) => p.id === match.parentId);
     const categoryName = parent ? categories.find((c) => c.id === parent.category)?.name ?? null : null;
-    return { type, vendorName: cleanedName, categoryName, needsReview: false };
+    return { type, vendorName: cleanedName, categoryName, needsReview: true };
   }
   // A mapped Category column names a category the bank already assigns —
   // trust it, same as the server does at import time.

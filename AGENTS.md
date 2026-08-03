@@ -6,7 +6,7 @@ This version has breaking changes — APIs, conventions, and file structure may 
 
 ## PennyTrail-specific notes
 
-- **Stack**: Next.js 16.2.9 (App Router), React 19, TypeScript, Tailwind v4.
+- **Stack**: Next.js 16.2.12 (App Router), React 19, TypeScript, Tailwind v4.
   Persistence is a local JSON file (`data/store.json`) via
   `src/lib/store.ts`, not a database — this is a single-user, no-auth
   personal tool by design, so don't introduce auth/multi-tenancy or swap in
@@ -19,11 +19,18 @@ This version has breaking changes — APIs, conventions, and file structure may 
   already has open on `3607`. Also point `PENNYTRAIL_DATA_DIR` at a
   scratch directory for these runs so they don't read/write the user's
   real `data/store.json`.
-- **`package.json` has an `overrides.postcss` pin.** Don't remove it and
-  never run `npm audit fix --force` here — npm's own suggested fix for the
-  bundled-postcss advisory is to downgrade `next` to `9.3.3`, which is a
-  regression, not a fix. Verify what any suggested audit fix actually
-  changes before applying it.
+- **`package.json` has `overrides.postcss` and `overrides.sharp` pins.**
+  Don't remove them and never run `npm audit fix --force` here — npm's own
+  suggested fix for the bundled-postcss advisory is to downgrade `next` to
+  `9.3.3`, which is a regression, not a fix. Verify what any suggested audit
+  fix actually changes before applying it.
+- **Test suite**: `npm test` runs Vitest (`tests/lib`, `tests/api`,
+  `tests/components`). API-route tests import route handlers directly and
+  point `PENNYTRAIL_DATA_DIR` at a fresh per-test temp directory — see
+  `tests/helpers/testStore.ts` for why a dynamic `import()` after
+  `vi.resetModules()` is required (store.ts's data-dir path is only
+  evaluated once per module instance). Run `npm test` after any change to
+  `src/lib/` or `src/app/api/`.
 - **Design fidelity**: the UI was ported from a Claude Design handoff
   (dashboard, import wizard, transactions, categories, cards, templates
   screens) — OKLCH color tokens, Public Sans + IBM Plex Mono fonts, exact
