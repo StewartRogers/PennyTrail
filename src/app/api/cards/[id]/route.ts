@@ -10,6 +10,7 @@ export async function PATCH(request: Request, ctx: RouteContext<"/api/cards/[id]
     if (!card) return null;
     if (typeof body.name === "string") card.name = body.name;
     if (typeof body.bank === "string") card.bank = body.bank;
+    if (typeof body.last4 === "string") card.last4 = body.last4;
     if (body.network === "Visa" || body.network === "Mastercard") card.network = body.network;
     return card;
   });

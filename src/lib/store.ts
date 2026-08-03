@@ -34,9 +34,9 @@ function enqueue<T>(task: () => Promise<T>): Promise<T> {
 }
 
 async function readStateUnqueued(): Promise<AppState> {
+  let raw: string;
   try {
-    const raw = await readFile(DATA_FILE, "utf-8");
-    return JSON.parse(raw) as AppState;
+    raw = await readFile(DATA_FILE, "utf-8");
   } catch (err: unknown) {
     if ((err as NodeJS.ErrnoException).code === "ENOENT") {
       const initial = emptyState();
@@ -44,6 +44,16 @@ async function readStateUnqueued(): Promise<AppState> {
       return initial;
     }
     throw err;
+  }
+  try {
+    return JSON.parse(raw) as AppState;
+  } catch (err: unknown) {
+    // A hand-edited or partially-written store.json throws an opaque
+    // "Unexpected token" error otherwise — every route surfaces this as a
+    // generic 500 with no indication of what's actually wrong or where the
+    // file lives, since this is the one place that reads it.
+    const message = err instanceof Error ? err.message : String(err);
+    throw new Error(`${DATA_FILE} is not valid JSON (${message}) — fix or restore it from a backup before retrying`);
   }
 }
 

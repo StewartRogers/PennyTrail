@@ -35,10 +35,18 @@ export async function POST(request: Request) {
     const created: Transaction[] = [];
     let skipped = 0;
     for (const row of rows) {
-      if (typeof row.amount !== "number" || !Number.isFinite(row.amount)) {
-        // A bad/missing amount (e.g. an unparseable CSV cell) would otherwise
-        // serialize as `null` and permanently corrupt this transaction —
-        // drop the row instead and surface the count to the caller.
+      if (
+        typeof row.amount !== "number" ||
+        !Number.isFinite(row.amount) ||
+        typeof row.date !== "string" ||
+        !row.date ||
+        typeof row.rawDescription !== "string"
+      ) {
+        // A bad/missing amount, date, or description (e.g. an unparseable
+        // or malformed CSV cell) would otherwise be stored as-is and
+        // permanently corrupt this transaction (wrong sort order, crashes
+        // in code that assumes these are strings) — drop the row instead
+        // and surface the count to the caller.
         skipped++;
         continue;
       }
@@ -53,10 +61,13 @@ export async function POST(request: Request) {
         childVendorId = match.childVendorId;
         needsReview = false;
       } else if (match.kind === "fuzzy") {
+        // A fuzzy match is a token-containment guess, not a confirmed
+        // identity — link it as a starting point but still surface it for
+        // review, since a short parent name can contain-match an unrelated
+        // longer name (e.g. "Shell" inside "Shell Vacations Club").
         const child: ChildVendor = { id: uid("child"), parentId: match.parentId, rawName: cleanedName };
         state.childVendors.push(child);
         childVendorId = child.id;
-        needsReview = false;
       } else if (row.categoryText?.trim()) {
         // A mapped Category column names a category this bank already
         // assigns — trust it to create a brand-new vendor immediately

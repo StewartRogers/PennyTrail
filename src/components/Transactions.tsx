@@ -87,6 +87,17 @@ export function Transactions({
 
   const visible = filtered.slice(0, visibleCount);
 
+  // Changing a filter can take previously-selected rows out of view — clear
+  // the selection along with resetting pagination so "N selected" can never
+  // silently refer to rows the user can no longer see and didn't intend to
+  // act on (e.g. selecting rows under one card filter, switching to another
+  // card, and deleting what looks like a fresh selection).
+  function resetForFilterChange() {
+    setVisibleCount(PAGE_SIZE);
+    setSelectedIds(new Set());
+    setConfirmingDeleteSelected(false);
+  }
+
   async function commitVendorReassign(t: Transaction, parentId: string) {
     if (parentId === parentIdForTransaction(t, childById)) return;
     try {
@@ -190,7 +201,7 @@ export function Transactions({
           value={search}
           onChange={(e) => {
             setSearch(e.target.value);
-            setVisibleCount(PAGE_SIZE);
+            resetForFilterChange();
           }}
           placeholder="Search vendor or description…"
           style={{ ...inputStyle, flex: 1, minWidth: 200, padding: "9px 12px", fontSize: 13.5 }}
@@ -199,7 +210,7 @@ export function Transactions({
           value={cardFilter}
           onChange={(e) => {
             setCardFilter(e.target.value);
-            setVisibleCount(PAGE_SIZE);
+            resetForFilterChange();
           }}
           style={inputStyle}
         >
@@ -214,7 +225,7 @@ export function Transactions({
           value={categoryFilter}
           onChange={(e) => {
             setCategoryFilter(e.target.value);
-            setVisibleCount(PAGE_SIZE);
+            resetForFilterChange();
           }}
           style={inputStyle}
         >
@@ -230,7 +241,7 @@ export function Transactions({
           value={typeFilter}
           onChange={(e) => {
             setTypeFilter(e.target.value as TxnType | "all");
-            setVisibleCount(PAGE_SIZE);
+            resetForFilterChange();
           }}
           style={inputStyle}
         >
@@ -258,7 +269,7 @@ export function Transactions({
             <button
               onClick={() => {
                 setVendorFilter(null);
-                setVisibleCount(PAGE_SIZE);
+                resetForFilterChange();
               }}
               style={{ border: "none", background: "transparent", cursor: "pointer", color: "var(--muted)", fontSize: 13 }}
             >
@@ -542,6 +553,7 @@ function VendorCell({
   onCreateNew: (name: string, category: string) => Promise<boolean>;
 }) {
   const [creating, setCreating] = useState(false);
+  const [pickingParent, setPickingParent] = useState(false);
   const [newName, setNewName] = useState(currentVendorName || "");
   const [newCategory, setNewCategory] = useState("");
 
@@ -594,8 +606,37 @@ function VendorCell({
     );
   }
 
+  // Every visible row would otherwise mount a <select> with every parent as
+  // an <option> (n rows x m parents DOM nodes) — the same blowup fixed in
+  // VendorMappings. Only materialize the full option list for the one row
+  // actively being reassigned.
+  if (!pickingParent) {
+    return (
+      <button
+        onClick={() => setPickingParent(true)}
+        title="Change this transaction's vendor"
+        style={{
+          border: "1px solid var(--border)",
+          background: "transparent",
+          color: currentParentId ? "var(--text)" : "var(--muted)",
+          borderRadius: 6,
+          padding: "5px 6px",
+          fontSize: 12.5,
+          maxWidth: 200,
+          textAlign: "left",
+          whiteSpace: "nowrap",
+          overflow: "hidden",
+          textOverflow: "ellipsis",
+        }}
+      >
+        {currentParentId ? parents.find((p) => p.id === currentParentId)?.name || currentVendorName : "— Unassigned —"}
+      </button>
+    );
+  }
+
   return (
     <select
+      autoFocus
       value={currentParentId ?? ""}
       onChange={(e) => {
         if (e.target.value === "__new__") {
@@ -603,8 +644,10 @@ function VendorCell({
           setCreating(true);
         } else {
           onReassign(e.target.value);
+          setPickingParent(false);
         }
       }}
+      onBlur={() => setPickingParent(false)}
       style={{ border: "1px solid var(--border)", borderRadius: 6, padding: "5px 6px", fontSize: 12.5, maxWidth: 200 }}
     >
       {!currentParentId && <option value="">— Unassigned —</option>}

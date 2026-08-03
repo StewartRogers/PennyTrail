@@ -22,6 +22,11 @@ export function cleanVendorName(raw: string | null | undefined): string {
   // joining two real words (legitimate hyphenated names like "T-Mobile" or
   // "7-Eleven" are untouched, since those hyphens sit between word characters).
   s = s.replace(/(?<![A-Za-z0-9])-+|-+(?![A-Za-z0-9])/g, " ");
+  // The same digit-stripping can also leave a multi-hyphen run flanked by
+  // real words on both sides (e.g. "SOME-CORP-98765-STORE" -> "SOME-CORP--
+  // STORE") — a single hyphen there is a legitimate word joiner, but 2+ in
+  // a row is always leftover noise, never an intentional name.
+  s = s.replace(/(?<=[A-Za-z0-9])-{2,}(?=[A-Za-z0-9])/g, " ");
   s = s.replace(/[*#]/g, " ");
   s = s.replace(/\s{2,}/g, " ").trim();
   // A token with two or more separate digit groups (e.g. "AB1CD2",
@@ -37,7 +42,10 @@ export function cleanVendorName(raw: string | null | undefined): string {
     .trim();
   if (!s) return String(raw || "").trim();
   if (s === s.toUpperCase()) {
-    s = s.toLowerCase().replace(/\b\w/g, (c) => c.toUpperCase());
+    // Capitalize each word's first letter, but not a letter right after an
+    // apostrophe ("MCDONALD'S" -> "Mcdonald's", not "Mcdonald'S") — a
+    // hyphen still counts as a word boundary so "T-MOBILE" -> "T-Mobile".
+    s = s.toLowerCase().replace(/(?<!['’])\b\w/g, (c) => c.toUpperCase());
   }
   return s;
 }

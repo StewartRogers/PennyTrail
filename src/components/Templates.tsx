@@ -26,9 +26,13 @@ export function Templates({ appState, onReload }: { appState: AppState; onReload
   const pushToast = useToast();
 
   async function handleDelete(t: Template) {
-    await deleteTemplate(t.id);
-    await onReload();
-    pushToast(`Deleted template "${t.name}"`);
+    try {
+      await deleteTemplate(t.id);
+      await onReload();
+      pushToast(`Deleted template "${t.name}"`);
+    } catch (err) {
+      pushToast(err instanceof Error ? err.message : "Failed to delete template");
+    }
   }
 
   return (

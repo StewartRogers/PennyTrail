@@ -35,12 +35,16 @@ export function parentIdForTransaction(txn: Pick<Transaction, "childVendorId">, 
 // Parent names and vendor (child) names are each unique — case-insensitive,
 // trimmed — so these are the single place that decides "does this name
 // already exist" for every create/rename path to check against.
+function normalizeName(name: string): string {
+  return name.trim().normalize("NFC").toLowerCase();
+}
+
 export function findParentByName(parents: ParentVendor[], name: string, excludeId?: string): ParentVendor | undefined {
-  const lower = name.trim().toLowerCase();
-  return parents.find((p) => p.id !== excludeId && p.name.trim().toLowerCase() === lower);
+  const normalized = normalizeName(name);
+  return parents.find((p) => p.id !== excludeId && normalizeName(p.name) === normalized);
 }
 
 export function findChildByRawName(children: ChildVendor[], rawName: string): ChildVendor | undefined {
-  const lower = rawName.trim().toLowerCase();
-  return children.find((c) => c.rawName.trim().toLowerCase() === lower);
+  const normalized = normalizeName(rawName);
+  return children.find((c) => normalizeName(c.rawName) === normalized);
 }

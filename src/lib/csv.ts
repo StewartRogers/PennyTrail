@@ -82,9 +82,10 @@ export function parseAmount(str: unknown): number {
     negative = true;
     s = s.slice(1, -1);
   }
+  s = s.replace(/[‐-―−]/g, "-"); // normalize unicode hyphen/dash/minus variants to ascii hyphen
   s = s.replace(/[^0-9.\-]/g, "");
-  if (s.startsWith("-")) negative = true;
-  s = s.replace("-", "");
+  if (s.includes("-")) negative = true;
+  s = s.replace(/-/g, "");
   const n = parseFloat(s);
   if (isNaN(n)) return NaN;
   return negative ? -n : n;
@@ -110,9 +111,9 @@ export function parseDateFlexible(str: unknown, format: string): string | null {
     m = +p[0];
     d = +p[1];
     y = +p[2];
-    if (y < 100) y += 2000;
   }
-  if (!y || !m || !d) return null;
+  if (y < 100) y += 2000;
+  if (!y || !m || !d || m < 1 || m > 12 || d < 1 || d > 31) return null;
   const iso =
     y.toString().padStart(4, "0") + "-" + String(m).padStart(2, "0") + "-" + String(d).padStart(2, "0");
   return iso;

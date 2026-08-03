@@ -194,6 +194,7 @@ export function ImportWizard({
   );
   const categoryById = useMemo(() => new Map(appState.categories.map((c) => [c.id, c])), [appState.categories]);
   const parentById = useMemo(() => new Map(appState.parentVendors.map((p) => [p.id, p])), [appState.parentVendors]);
+  const childById = useMemo(() => new Map(appState.childVendors.map((c) => [c.id, c])), [appState.childVendors]);
 
   const matchingTemplates = useMemo(() => {
     if (!selectedCard) return [];
@@ -230,11 +231,15 @@ export function ImportWizard({
   async function handleAddCard() {
     const name = newCard.name.trim();
     if (!name) return;
-    const card = await addCard({ name, bank: newCard.bank.trim(), last4: newCard.last4.trim(), network: newCard.network });
-    setNewCard({ name: "", bank: "", last4: "", network: "Visa" });
-    await onReload();
-    setCardId(card.id);
-    pushToast(`Added card "${name}"`);
+    try {
+      const card = await addCard({ name, bank: newCard.bank.trim(), last4: newCard.last4.trim(), network: newCard.network });
+      setNewCard({ name: "", bank: "", last4: "", network: "Visa" });
+      await onReload();
+      setCardId(card.id);
+      pushToast(`Added card "${name}"`);
+    } catch (err) {
+      pushToast(err instanceof Error ? err.message : "Failed to add card");
+    }
   }
 
   function startEditCard(c: { id: string; name: string; bank: string; network: Network }) {
@@ -245,25 +250,36 @@ export function ImportWizard({
   async function saveCardEdit(id: string) {
     const name = editDraft.name.trim();
     if (!name) return;
-    await updateCard(id, { name, bank: editDraft.bank.trim(), network: editDraft.network });
-    await onReload();
-    setEditingCardId(null);
-    pushToast("Card updated");
+    try {
+      await updateCard(id, { name, bank: editDraft.bank.trim(), network: editDraft.network });
+      await onReload();
+      setEditingCardId(null);
+      pushToast("Card updated");
+    } catch (err) {
+      pushToast(err instanceof Error ? err.message : "Failed to update card");
+    }
   }
 
   async function handleFileChange(file: File) {
-    const text = await file.text();
-    const rows = parseCSV(text);
-    if (rows.length === 0) return;
-    setFileName(file.name);
-    setRawRows(rows);
-    if (matchingTemplates.length > 0) {
-      const t = matchingTemplates[0];
-      setSkipRows(t.skipRows ?? 0);
-      applyTemplate(t.id, rows[t.skipRows ?? 0] || []);
-    } else {
-      setSkipRows(0);
-      applyTemplate("__new__", rows[0] || []);
+    try {
+      const text = await file.text();
+      const rows = parseCSV(text);
+      if (rows.length === 0) {
+        pushToast("That file has no rows to import");
+        return;
+      }
+      setFileName(file.name);
+      setRawRows(rows);
+      if (matchingTemplates.length > 0) {
+        const t = matchingTemplates[0];
+        setSkipRows(t.skipRows ?? 0);
+        applyTemplate(t.id, rows[t.skipRows ?? 0] || []);
+      } else {
+        setSkipRows(0);
+        applyTemplate("__new__", rows[0] || []);
+      }
+    } catch (err) {
+      pushToast(err instanceof Error ? err.message : "Failed to read that file");
     }
   }
 
@@ -319,26 +335,34 @@ export function ImportWizard({
 
   async function continueToStep3() {
     if (mapChoice === "__new__" && templateName.trim() && selectedCard) {
-      await addTemplate({
-        name: templateName.trim(),
-        bank: selectedCard.bank,
-        network: selectedCard.network,
-        dateCol: mapping.dateCol,
-        descCol: mapping.descCol,
-        dateFormat: mapping.dateFormat,
-        amountMode: mapping.amountMode,
-        amountCol: mapping.amountCol,
-        amountConvention: mapping.amountConvention,
-        debitCol: mapping.debitCol,
-        creditCol: mapping.creditCol,
-        vendorCol: mapping.vendorCol,
-        categoryCol: mapping.categoryCol,
-        typeCol: mapping.typeCol,
-        skipRows,
-        headerSnapshot: headers,
-      });
-      await onReload();
-      pushToast(`Saved import template "${templateName.trim()}"`);
+      try {
+        await addTemplate({
+          name: templateName.trim(),
+          bank: selectedCard.bank,
+          network: selectedCard.network,
+          dateCol: mapping.dateCol,
+          descCol: mapping.descCol,
+          dateFormat: mapping.dateFormat,
+          amountMode: mapping.amountMode,
+          amountCol: mapping.amountCol,
+          amountConvention: mapping.amountConvention,
+          debitCol: mapping.debitCol,
+          creditCol: mapping.creditCol,
+          vendorCol: mapping.vendorCol,
+          categoryCol: mapping.categoryCol,
+          typeCol: mapping.typeCol,
+          skipRows,
+          headerSnapshot: headers,
+        });
+        await onReload();
+        pushToast(`Saved import template "${templateName.trim()}"`);
+      } catch (err) {
+        // Stay on this step so the user can rename the template or clear
+        // the name field, instead of silently dropping the mapping they
+        // asked to save and moving on as if it succeeded.
+        pushToast(err instanceof Error ? err.message : "Failed to save import template");
+        return;
+      }
     }
     setStep(3);
   }
@@ -375,9 +399,16 @@ export function ImportWizard({
 
   function seedReviewFields(rest: Transaction[]) {
     if (rest.length > 0) {
-      setReviewType(rest[0].type);
-      setReviewParentId("__new__");
-      setReviewNewName(cleanVendorName(rest[0].rawDescription));
+      const item = rest[0];
+      setReviewType(item.type);
+      // A fuzzy vendor match already links childVendorId to a suggested
+      // parent (see transactions/import route) but still needs a human to
+      // confirm it — default to that parent instead of "create new" so
+      // confirming is just Save & Next, not accidentally forking a
+      // duplicate vendor.
+      const existingParentId = item.childVendorId ? childById.get(item.childVendorId)?.parentId : undefined;
+      setReviewParentId(existingParentId ?? "__new__");
+      setReviewNewName(cleanVendorName(item.rawDescription));
       setReviewCategory("");
     } else {
       setStep(5);
@@ -406,7 +437,12 @@ export function ImportWizard({
         return;
       }
     } else {
-      await updateTransaction(current.id, { type: reviewType, parentId: reviewParentId });
+      try {
+        await updateTransaction(current.id, { type: reviewType, parentId: reviewParentId });
+      } catch (err) {
+        pushToast(err instanceof Error ? err.message : "Failed to link vendor");
+        return;
+      }
     }
 
     // A freshly-created (or newly-linked) vendor should immediately catch
@@ -418,20 +454,34 @@ export function ImportWizard({
     if (rest.length > 0) {
       const fresh = await fetchState();
       const stillNeedsReview: Transaction[] = [];
+      let autoLinkFailures = 0;
       for (const item of rest) {
         const cleanedName = cleanVendorName(item.rawDescription);
         const match = resolveVendor(cleanedName, fresh.childVendors, fresh.parentVendors);
-        if (match.kind === "exact") {
-          await updateTransaction(item.id, { childVendorId: match.childVendorId });
-          resolvedCount++;
-        } else if (match.kind === "fuzzy") {
-          await updateTransaction(item.id, { parentId: match.parentId });
-          resolvedCount++;
-        } else {
+        try {
+          if (match.kind === "exact") {
+            // An exact match here is the literal same vendor the user just
+            // resolved (or another exact duplicate already on file) — safe
+            // to auto-confirm. A "fuzzy" match is only ever a guess, so
+            // (like the primary import path) it still needs a human to
+            // confirm it and falls through to stillNeedsReview below.
+            await updateTransaction(item.id, { childVendorId: match.childVendorId });
+            resolvedCount++;
+          } else {
+            stillNeedsReview.push(item);
+          }
+        } catch {
+          // Don't let one failed auto-link abandon the rest of the batch
+          // (and leave the client's queue out of sync with what actually
+          // saved) — just leave this one in the review queue instead.
+          autoLinkFailures++;
           stillNeedsReview.push(item);
         }
       }
       rest = stillNeedsReview;
+      if (autoLinkFailures > 0) {
+        pushToast(`${autoLinkFailures} other matching transaction${autoLinkFailures === 1 ? "" : "s"} couldn't be auto-linked and still need review`);
+      }
     }
 
     await onReload();
