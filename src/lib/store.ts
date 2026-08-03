@@ -47,11 +47,29 @@ async function readStateUnqueued(): Promise<AppState> {
   }
 }
 
+// On Windows, renaming onto DATA_FILE can transiently fail with EPERM/EBUSY
+// when antivirus, search indexing, or an editor briefly holds a handle on
+// the file right after it's written — the lock clears within milliseconds,
+// so a few short retries ride it out instead of failing the whole request.
+async function renameWithRetry(src: string, dest: string): Promise<void> {
+  const maxAttempts = 5;
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      await rename(src, dest);
+      return;
+    } catch (err: unknown) {
+      const code = (err as NodeJS.ErrnoException).code;
+      if (attempt === maxAttempts || (code !== "EPERM" && code !== "EBUSY")) throw err;
+      await new Promise((resolve) => setTimeout(resolve, 50 * attempt));
+    }
+  }
+}
+
 async function writeStateUnqueued(state: AppState): Promise<void> {
   await mkdir(DATA_DIR, { recursive: true });
   const tmpFile = `${DATA_FILE}.tmp-${process.pid}-${Date.now()}`;
   await writeFile(tmpFile, JSON.stringify(state, null, 2), "utf-8");
-  await rename(tmpFile, DATA_FILE);
+  await renameWithRetry(tmpFile, DATA_FILE);
 }
 
 export function readState(): Promise<AppState> {

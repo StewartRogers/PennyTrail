@@ -344,7 +344,7 @@ export function ImportWizard({
   }
 
   async function confirmImport() {
-    if (!cardId) return;
+    if (!cardId || validRows.length === 0) return;
     const rows: ImportRow[] = validRows.map((r) => ({
       date: r.date as string,
       rawDescription: r.rawDescription,
@@ -354,18 +354,22 @@ export function ImportWizard({
       categoryText: r.categoryText,
       typeText: r.typeText,
     }));
-    const res = await importTransactions(cardId, rows);
-    await onReload();
-    setSummary(res.counts);
-    const needsReview = res.transactions.filter((t) => t.needsReview);
-    if (needsReview.length > 0) {
-      setReviewQueue(needsReview);
-      setReviewTotal(needsReview.length);
-      setReviewResolvedCount(0);
-      seedReviewFields(needsReview);
-      setStep(4);
-    } else {
-      setStep(5);
+    try {
+      const res = await importTransactions(cardId, rows);
+      await onReload();
+      setSummary(res.counts);
+      const needsReview = res.transactions.filter((t) => t.needsReview);
+      if (needsReview.length > 0) {
+        setReviewQueue(needsReview);
+        setReviewTotal(needsReview.length);
+        setReviewResolvedCount(0);
+        seedReviewFields(needsReview);
+        setStep(4);
+      } else {
+        setStep(5);
+      }
+    } catch (err) {
+      pushToast(err instanceof Error ? err.message : "Failed to import transactions");
     }
   }
 
@@ -922,7 +926,9 @@ export function ImportWizard({
           </div>
           <div style={{ display: "flex", gap: 10 }}>
             <SecondaryButton onClick={() => setStep(2)}>← Back</SecondaryButton>
-            <PrimaryButton onClick={confirmImport}>Import {validRows.length} Transactions</PrimaryButton>
+            <PrimaryButton onClick={confirmImport} disabled={validRows.length === 0}>
+              Import {validRows.length} Transactions
+            </PrimaryButton>
           </div>
         </div>
       )}
@@ -950,13 +956,13 @@ export function ImportWizard({
               </select>
             </div>
             <div style={{ marginBottom: 12 }}>
-              <div style={labelStyle}>Vendor</div>
+              <div style={labelStyle}>Parent</div>
               <select
                 value={reviewParentId}
                 onChange={(e) => setReviewParentId(e.target.value)}
                 style={{ ...inputStyle, width: "100%", padding: "9px 10px", fontSize: 14 }}
               >
-                <option value="__new__">+ Create new vendor…</option>
+                <option value="__new__">+ Create new parent…</option>
                 {sortedParents.map((p) => (
                   <option key={p.id} value={p.id}>
                     {p.name}
@@ -966,8 +972,12 @@ export function ImportWizard({
             </div>
             {reviewParentId === "__new__" ? (
               <>
+                <div style={{ marginBottom: 4, fontSize: 12, color: "var(--muted)" }}>
+                  Vendor: <span style={{ fontFamily: "var(--mono)" }}>{cleanVendorName(currentReview.rawDescription)}</span> — this exact
+                  name must be unique across all parents.
+                </div>
                 <div style={{ marginBottom: 12 }}>
-                  <div style={labelStyle}>New vendor name</div>
+                  <div style={labelStyle}>New parent name</div>
                   <input
                     value={reviewNewName}
                     onChange={(e) => setReviewNewName(e.target.value)}

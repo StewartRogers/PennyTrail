@@ -16,6 +16,7 @@ export function VendorMappings({ appState, onReload }: { appState: AppState; onR
   const [search, setSearch] = useState("");
   const [confirmingDeleteId, setConfirmingDeleteId] = useState<string | null>(null);
   const [mergingId, setMergingId] = useState<string | null>(null);
+  const [movingChildId, setMovingChildId] = useState<string | null>(null);
 
   const categoryById = useMemo(() => new Map(appState.categories.map((c) => [c.id, c])), [appState.categories]);
   const sortedCategories = useMemo(() => sortCategoriesByName(appState.categories), [appState.categories]);
@@ -123,6 +124,7 @@ export function VendorMappings({ appState, onReload }: { appState: AppState; onR
     try {
       await moveChildVendor(childId, parentId);
       await onReload();
+      setMovingChildId(null);
     } catch (err) {
       pushToast(err instanceof Error ? err.message : "Failed to move vendor");
     }
@@ -177,7 +179,7 @@ export function VendorMappings({ appState, onReload }: { appState: AppState; onR
                 : <>No parents match &quot;{search}&quot;.</>}
             </div>
           ) : (
-            <div style={{ display: "flex", flexDirection: "column", gap: 8, maxWidth: 760 }}>
+            <div style={{ display: "flex", flexDirection: "column", gap: 8, maxWidth: 880 }}>
               {filteredParents.map((parent) => {
                 const category = categoryById.get(parent.category);
                 const count = txnCountByParent.get(parent.id) ?? 0;
@@ -290,7 +292,7 @@ export function VendorMappings({ appState, onReload }: { appState: AppState; onR
                 : <>No vendors match &quot;{search}&quot;.</>}
             </div>
           ) : (
-            <div style={{ display: "flex", flexDirection: "column", gap: 8, maxWidth: 760 }}>
+            <div style={{ display: "flex", flexDirection: "column", gap: 8, maxWidth: 880 }}>
               {filteredChildren.map((child) => {
                 const parent = parentById.get(child.parentId);
                 const category = parent ? categoryById.get(parent.category) : undefined;
@@ -307,18 +309,43 @@ export function VendorMappings({ appState, onReload }: { appState: AppState; onR
                     <div style={{ fontFamily: "var(--mono)", fontSize: 13, color: "var(--muted)", whiteSpace: "nowrap" }}>
                       {count} txn{count === 1 ? "" : "s"}
                     </div>
-                    <select
-                      value={child.parentId}
-                      onChange={(e) => handleMoveChild(child.id, e.target.value)}
-                      title="Parent vendor"
-                      style={{ ...inputStyle, minWidth: 180 }}
-                    >
-                      {sortedParents.map((p) => (
-                        <option key={p.id} value={p.id}>
-                          {p.name}
-                        </option>
-                      ))}
-                    </select>
+                    {movingChildId === child.id ? (
+                      <select
+                        autoFocus
+                        value={child.parentId}
+                        onChange={(e) => handleMoveChild(child.id, e.target.value)}
+                        onBlur={() => setMovingChildId(null)}
+                        title="Parent vendor"
+                        style={{ ...inputStyle, minWidth: 180 }}
+                      >
+                        {sortedParents.map((p) => (
+                          <option key={p.id} value={p.id}>
+                            {p.name}
+                          </option>
+                        ))}
+                      </select>
+                    ) : (
+                      <button
+                        onClick={() => setMovingChildId(child.id)}
+                        title="Change this vendor's parent"
+                        style={{
+                          border: "1px solid var(--border)",
+                          background: "transparent",
+                          color: "var(--text)",
+                          borderRadius: 8,
+                          padding: "7px 10px",
+                          fontSize: 12.5,
+                          fontWeight: 600,
+                          minWidth: 180,
+                          textAlign: "left",
+                          whiteSpace: "nowrap",
+                          overflow: "hidden",
+                          textOverflow: "ellipsis",
+                        }}
+                      >
+                        {parent?.name ?? "Unknown parent"}
+                      </button>
+                    )}
                     <button
                       onClick={() => handleDeleteChild(child.id, child.rawName)}
                       title="Remove this vendor name (its transactions go back to needing review)"

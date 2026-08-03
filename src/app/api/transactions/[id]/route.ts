@@ -53,7 +53,11 @@ export async function PATCH(request: Request, ctx: RouteContext<"/api/transactio
       const newParentName = body.newParentName.trim();
       if (findParentByName(state.parentVendors, newParentName)) return { error: "duplicate_parent" as const };
       const rawName = cleanVendorName(txn.rawDescription);
-      if (findChildByRawName(state.childVendors, rawName)) return { error: "duplicate_vendor" as const };
+      const existingChild = findChildByRawName(state.childVendors, rawName);
+      if (existingChild) {
+        const existingParentName = state.parentVendors.find((p) => p.id === existingChild.parentId)?.name ?? "another parent";
+        return { error: "duplicate_vendor" as const, existingParentName };
+      }
       const parent: ParentVendor = { id: uid("vnd"), name: newParentName, category: body.category };
       const child: ChildVendor = { id: uid("child"), parentId: parent.id, rawName };
       state.parentVendors.push(parent);
@@ -85,7 +89,10 @@ export async function PATCH(request: Request, ctx: RouteContext<"/api/transactio
     if (result.error === "invalid_parent") return NextResponse.json({ error: "Unknown parent vendor" }, { status: 400 });
     if (result.error === "duplicate_parent") return NextResponse.json({ error: "A parent with this name already exists" }, { status: 409 });
     if (result.error === "duplicate_vendor")
-      return NextResponse.json({ error: "A vendor for this exact description already exists under a different parent" }, { status: 409 });
+      return NextResponse.json(
+        { error: `This vendor already exists under "${result.existingParentName}" — pick that parent from the dropdown instead of creating a new one` },
+        { status: 409 }
+      );
     if (result.error === "invalid_reimbursed_amount") return NextResponse.json({ error: "Reimbursed amount must be a non-negative number" }, { status: 400 });
     if (result.error === "reimbursed_amount_too_large") return NextResponse.json({ error: "Reimbursed amount can't exceed the transaction amount" }, { status: 400 });
     return NextResponse.json({ error: "Unknown category" }, { status: 400 });

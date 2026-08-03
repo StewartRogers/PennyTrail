@@ -118,6 +118,24 @@ export function Dashboard({
 
   const purchases = useMemo(() => filtered.filter((t) => t.type === "purchase"), [filtered]);
 
+  // Spend in a dashboard-excluded category (e.g. reimbursed expenses) still
+  // gets paid off on the card, so it inflates Total Payments even though it
+  // was deliberately dropped from Total Spend. Netting this back out keeps
+  // the two KPIs comparable — Payments then reflects only what came out of
+  // the cardholder's own pocket, same as Spend does.
+  const excludedSpend = useMemo(() => {
+    const cutoff = rangeCutoff(rangePreset);
+    return appState.transactions
+      .filter((t) => {
+        if (t.type !== "purchase") return false;
+        if (cardFilter !== "all" && t.cardId !== cardFilter) return false;
+        if (cutoff && t.date < cutoff) return false;
+        const categoryId = categoryIdForTransaction(t, childById, parentById);
+        return categoryId ? excludedCategoryIds.has(categoryId) : false;
+      })
+      .reduce((sum, t) => sum + netAmountForTransaction(t), 0);
+  }, [appState.transactions, cardFilter, rangePreset, childById, parentById, excludedCategoryIds]);
+
   // The trend chart always shows a fixed trailing calendar window regardless
   // of the top-of-page range preset (6mo/12mo/YTD/All) — only the card
   // filter narrows it — so switching presets can't shrink or shift it.
@@ -133,12 +151,13 @@ export function Dashboard({
 
   const kpis = useMemo(() => {
     const spend = purchases.reduce((sum, t) => sum + netAmountForTransaction(t), 0);
-    const payments = filtered.filter((t) => t.type === "payment").reduce((sum, t) => sum + t.amount, 0);
+    const rawPayments = filtered.filter((t) => t.type === "payment").reduce((sum, t) => sum + t.amount, 0);
+    const payments = Math.max(0, rawPayments - excludedSpend);
     const cashback = filtered.filter((t) => t.type === "cashback").reduce((sum, t) => sum + t.amount, 0);
     const monthsInData = new Set(purchases.map((t) => monthKey(t.date)));
     const avgMonthly = monthsInData.size > 0 ? spend / monthsInData.size : 0;
     return { spend, payments, cashback, avgMonthly };
-  }, [filtered, purchases]);
+  }, [filtered, purchases, excludedSpend]);
 
   const trendBuckets = useMemo(() => {
     const keyFn = trendGroup === "month" ? monthKey : trendGroup === "quarter" ? quarterKey : yearKey;
@@ -267,13 +286,22 @@ export function Dashboard({
       <div style={{ display: "flex", gap: 14, marginBottom: 20, flexWrap: "wrap" }}>
         {[
           { label: "Total Spend", value: fmtCurrency(kpis.spend) },
-          { label: "Total Payments", value: fmtCurrency(kpis.payments) },
+          {
+            label: "Total Payments",
+            value: fmtCurrency(kpis.payments),
+            title:
+              excludedSpend > 0
+                ? `Excludes ${fmtCurrency(excludedSpend)} paid toward dashboard-excluded categories (e.g. reimbursed expenses)`
+                : undefined,
+          },
           { label: "Net Cashback Earned", value: fmtCurrency(kpis.cashback), color: "var(--positive)" },
           { label: "Avg Monthly Spend", value: fmtCurrency(kpis.avgMonthly) },
         ].map((kpi) => (
           <PanelCard key={kpi.label} style={{ flex: 1, minWidth: 180, padding: "18px 20px" }}>
-            <div style={{ fontSize: 12.5, color: "var(--muted)", marginBottom: 8 }}>{kpi.label}</div>
-            <div style={{ fontFamily: "var(--mono)", fontSize: 23, fontWeight: 600, color: kpi.color }}>
+            <div title={kpi.title} style={{ fontSize: 12.5, color: "var(--muted)", marginBottom: 8 }}>
+              {kpi.label}
+            </div>
+            <div title={kpi.title} style={{ fontFamily: "var(--mono)", fontSize: 23, fontWeight: 600, color: kpi.color }}>
               {kpi.value}
             </div>
           </PanelCard>
