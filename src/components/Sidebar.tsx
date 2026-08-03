@@ -8,6 +8,7 @@ const NAV_ITEMS: { screen: Screen; label: string }[] = [
   { screen: "import", label: "Import CSV" },
   { screen: "transactions", label: "Transactions" },
   { screen: "categories", label: "Categories" },
+  { screen: "vendors", label: "Vendor Mappings" },
   { screen: "cards", label: "Cards" },
   { screen: "templates", label: "Import Templates" },
 ];

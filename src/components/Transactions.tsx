@@ -2,9 +2,11 @@
 
 import { useMemo, useState } from "react";
 import type { AppState, Transaction, TxnType } from "@/lib/types";
-import { deleteAllTransactions, updateTransaction } from "@/lib/api";
+import { deleteAllTransactions, deleteTransactions, updateTransaction } from "@/lib/api";
+import { cleanVendorName } from "@/lib/classify";
 import { fmtCurrency, fmtDateShort } from "@/lib/format";
-import { TYPE_META, SYSTEM_CATEGORY_FOR_TYPE } from "@/lib/categories";
+import { TYPE_META, sortCategoriesByName } from "@/lib/categories";
+import { categoryIdForTransaction, netAmountForTransaction, parentIdForTransaction, vendorNameForTransaction } from "@/lib/vendors";
 import { PageTitle, ColorDot, inputStyle, SecondaryButton } from "./ui";
 import { useToast } from "./ToastContext";
 
@@ -13,6 +15,7 @@ export interface TxnFilterSeed {
   categoryFilter?: string;
   cardFilter?: string;
   typeFilter?: TxnType | "all";
+  vendorFilter?: string; // a ParentVendor id
 }
 
 const PAGE_SIZE = 40;
@@ -33,9 +36,13 @@ export function Transactions({
   const [cardFilter, setCardFilter] = useState("all");
   const [categoryFilter, setCategoryFilter] = useState("all");
   const [typeFilter, setTypeFilter] = useState<TxnType | "all">("all");
+  const [vendorFilter, setVendorFilter] = useState<string | null>(null);
   const [visibleCount, setVisibleCount] = useState(PAGE_SIZE);
   const [confirmingDeleteAll, setConfirmingDeleteAll] = useState(false);
   const [deletingAll, setDeletingAll] = useState(false);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [confirmingDeleteSelected, setConfirmingDeleteSelected] = useState(false);
+  const [deletingSelected, setDeletingSelected] = useState(false);
 
   // Apply an incoming filter seed (e.g. from a dashboard drill-down "View all")
   // during render rather than in an effect, since it's adjusting state in
@@ -47,45 +54,82 @@ export function Transactions({
     setCardFilter(seed.cardFilter ?? "all");
     setCategoryFilter(seed.categoryFilter ?? "all");
     setTypeFilter(seed.typeFilter ?? "all");
+    setVendorFilter(seed.vendorFilter ?? null);
     setVisibleCount(PAGE_SIZE);
+    setSelectedIds(new Set());
+    setConfirmingDeleteSelected(false);
   }
 
   const cardById = useMemo(() => new Map(appState.cards.map((c) => [c.id, c])), [appState.cards]);
   const categoryById = useMemo(() => new Map(appState.categories.map((c) => [c.id, c])), [appState.categories]);
-  const spendCategories = useMemo(() => appState.categories.filter((c) => !c.system), [appState.categories]);
+  const sortedCategories = useMemo(() => sortCategoriesByName(appState.categories), [appState.categories]);
+  const childById = useMemo(() => new Map(appState.childVendors.map((c) => [c.id, c])), [appState.childVendors]);
+  const parentById = useMemo(() => new Map(appState.parentVendors.map((p) => [p.id, p])), [appState.parentVendors]);
+  const sortedParents = useMemo(
+    () => [...appState.parentVendors].sort((a, b) => a.name.localeCompare(b.name)),
+    [appState.parentVendors]
+  );
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
     return appState.transactions.filter((t) => {
-      if (q && !t.vendor.toLowerCase().includes(q) && !t.rawDescription.toLowerCase().includes(q)) return false;
+      const vendorName = vendorNameForTransaction(t, childById) || "";
+      if (q && !vendorName.toLowerCase().includes(q) && !t.rawDescription.toLowerCase().includes(q)) return false;
       if (cardFilter !== "all" && t.cardId !== cardFilter) return false;
       if (categoryFilter === "needs_review" && !t.needsReview) return false;
-      else if (categoryFilter !== "all" && categoryFilter !== "needs_review" && t.category !== categoryFilter) return false;
+      else if (categoryFilter !== "all" && categoryFilter !== "needs_review" && categoryIdForTransaction(t, childById, parentById) !== categoryFilter)
+        return false;
       if (typeFilter !== "all" && t.type !== typeFilter) return false;
+      if (vendorFilter && parentIdForTransaction(t, childById) !== vendorFilter) return false;
       return true;
     });
-  }, [appState.transactions, search, cardFilter, categoryFilter, typeFilter]);
+  }, [appState.transactions, search, cardFilter, categoryFilter, typeFilter, vendorFilter, childById, parentById]);
 
   const visible = filtered.slice(0, visibleCount);
 
-  async function commitVendor(t: Transaction, vendor: string) {
-    if (vendor === t.vendor) return;
-    await updateTransaction(t.id, { vendor });
-    await onReload();
+  async function commitVendorReassign(t: Transaction, parentId: string) {
+    if (parentId === parentIdForTransaction(t, childById)) return;
+    try {
+      await updateTransaction(t.id, { parentId });
+      await onReload();
+    } catch (err) {
+      pushToast(err instanceof Error ? err.message : "Failed to reassign vendor");
+    }
   }
 
-  async function commitCategory(t: Transaction, category: string) {
-    await updateTransaction(t.id, { category: category || null, needsReview: false });
-    await onReload();
+  async function commitNewVendor(t: Transaction, name: string, category: string): Promise<boolean> {
+    try {
+      await updateTransaction(t.id, { newParentName: name, category });
+      await onReload();
+      pushToast(`Created vendor "${name}"`);
+      return true;
+    } catch (err) {
+      pushToast(err instanceof Error ? err.message : "Failed to create vendor");
+      return false;
+    }
   }
 
   async function commitType(t: Transaction, type: TxnType) {
     if (type === t.type) return;
-    // Non-purchase types always carry their fixed system category; switching
-    // back to purchase clears it so the row asks for a real spend category.
-    const category = type === "purchase" ? null : SYSTEM_CATEGORY_FOR_TYPE[type] ?? null;
-    await updateTransaction(t.id, { type, category, needsReview: type === "purchase" });
-    await onReload();
+    try {
+      await updateTransaction(t.id, { type });
+      await onReload();
+    } catch (err) {
+      pushToast(err instanceof Error ? err.message : "Failed to update transaction type");
+    }
+  }
+
+  async function commitReimbursedAmount(t: Transaction, raw: string) {
+    const trimmed = raw.trim();
+    const next = trimmed === "" ? null : Math.max(0, Math.min(t.amount, Number(trimmed)));
+    if (trimmed !== "" && Number.isNaN(next)) return;
+    if ((next ?? undefined) === (t.reimbursedAmount ?? undefined)) return;
+    try {
+      await updateTransaction(t.id, { reimbursedAmount: next });
+      await onReload();
+    } catch (err) {
+      pushToast(err instanceof Error ? err.message : "Failed to update reimbursed amount");
+    }
   }
 
   async function handleDeleteAll() {
@@ -95,15 +139,53 @@ export function Transactions({
       await onReload();
       setConfirmingDeleteAll(false);
       pushToast(`Deleted ${deletedCount} transaction${deletedCount === 1 ? "" : "s"}`);
+    } catch (err) {
+      pushToast(err instanceof Error ? err.message : "Failed to delete transactions");
     } finally {
       setDeletingAll(false);
+    }
+  }
+
+  function toggleSelected(id: string) {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+
+  function toggleSelectAllVisible() {
+    setSelectedIds((prev) => {
+      const allSelected = visible.length > 0 && visible.every((t) => prev.has(t.id));
+      const next = new Set(prev);
+      for (const t of visible) {
+        if (allSelected) next.delete(t.id);
+        else next.add(t.id);
+      }
+      return next;
+    });
+  }
+
+  async function handleDeleteSelected() {
+    setDeletingSelected(true);
+    try {
+      const { deletedCount } = await deleteTransactions(Array.from(selectedIds));
+      await onReload();
+      setSelectedIds(new Set());
+      setConfirmingDeleteSelected(false);
+      pushToast(`Deleted ${deletedCount} transaction${deletedCount === 1 ? "" : "s"}`);
+    } catch (err) {
+      pushToast(err instanceof Error ? err.message : "Failed to delete selected transactions");
+    } finally {
+      setDeletingSelected(false);
     }
   }
 
   return (
     <div>
       <PageTitle>Transactions</PageTitle>
-      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 16 }}>
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 16, alignItems: "center" }}>
         <input
           value={search}
           onChange={(e) => {
@@ -138,7 +220,7 @@ export function Transactions({
         >
           <option value="all">All Categories</option>
           <option value="needs_review">⚠ Needs Review</option>
-          {appState.categories.map((c) => (
+          {sortedCategories.map((c) => (
             <option key={c.id} value={c.id}>
               {c.name}
             </option>
@@ -159,16 +241,103 @@ export function Transactions({
           <option value="cashback">Cashback</option>
           <option value="fee">Fee / Interest</option>
         </select>
+        {vendorFilter && (
+          <span
+            style={{
+              display: "inline-flex",
+              alignItems: "center",
+              gap: 6,
+              background: "var(--panel)",
+              border: "1px solid var(--border)",
+              borderRadius: 20,
+              padding: "5px 10px",
+              fontSize: 12.5,
+            }}
+          >
+            Vendor: {parentById.get(vendorFilter)?.name || vendorFilter}
+            <button
+              onClick={() => {
+                setVendorFilter(null);
+                setVisibleCount(PAGE_SIZE);
+              }}
+              style={{ border: "none", background: "transparent", cursor: "pointer", color: "var(--muted)", fontSize: 13 }}
+            >
+              ×
+            </button>
+          </span>
+        )}
       </div>
 
-      <div style={{ fontSize: 12.5, color: "var(--muted)", marginBottom: 8 }}>
-        {filtered.length} transaction{filtered.length === 1 ? "" : "s"}
+      <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 8, flexWrap: "wrap" }}>
+        <div style={{ fontSize: 12.5, color: "var(--muted)" }}>
+          {filtered.length} transaction{filtered.length === 1 ? "" : "s"}
+        </div>
+        {selectedIds.size > 0 && (
+          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <span style={{ fontSize: 12.5, color: "var(--muted)" }}>{selectedIds.size} selected</span>
+            {confirmingDeleteSelected ? (
+              <>
+                <span style={{ fontSize: 12.5, color: "var(--attention)" }}>Delete {selectedIds.size} transaction{selectedIds.size === 1 ? "" : "s"}?</span>
+                <button
+                  onClick={handleDeleteSelected}
+                  disabled={deletingSelected}
+                  style={{
+                    border: "1px solid var(--attention)",
+                    background: "var(--attention)",
+                    color: "white",
+                    borderRadius: 8,
+                    padding: "5px 10px",
+                    fontSize: 12,
+                    fontWeight: 600,
+                    cursor: deletingSelected ? "not-allowed" : "pointer",
+                    opacity: deletingSelected ? 0.7 : 1,
+                  }}
+                >
+                  {deletingSelected ? "Deleting…" : "Confirm"}
+                </button>
+                <button
+                  onClick={() => setConfirmingDeleteSelected(false)}
+                  disabled={deletingSelected}
+                  style={{ border: "1px solid var(--border)", background: "transparent", color: "var(--text)", borderRadius: 8, padding: "5px 10px", fontSize: 12, fontWeight: 600 }}
+                >
+                  Cancel
+                </button>
+              </>
+            ) : (
+              <>
+                <button
+                  onClick={() => setConfirmingDeleteSelected(true)}
+                  style={{ border: "1px solid var(--attention)", background: "transparent", color: "var(--attention)", borderRadius: 8, padding: "5px 10px", fontSize: 12, fontWeight: 600 }}
+                >
+                  Delete selected…
+                </button>
+                <button
+                  onClick={() => setSelectedIds(new Set())}
+                  style={{ border: "1px solid var(--border)", background: "transparent", color: "var(--muted)", borderRadius: 8, padding: "5px 10px", fontSize: 12, fontWeight: 600 }}
+                >
+                  Clear
+                </button>
+              </>
+            )}
+          </div>
+        )}
       </div>
 
       <div style={{ overflowX: "auto", border: "1px solid var(--border)", borderRadius: 12, background: "var(--panel)" }}>
         <table style={{ borderCollapse: "collapse", width: "100%", fontSize: 13 }}>
           <thead>
             <tr>
+              <th style={{ padding: "10px 12px", borderBottom: "1px solid var(--border)", width: 1 }}>
+                <input
+                  type="checkbox"
+                  checked={visible.length > 0 && visible.every((t) => selectedIds.has(t.id))}
+                  ref={(el) => {
+                    if (el) el.indeterminate = visible.some((t) => selectedIds.has(t.id)) && !visible.every((t) => selectedIds.has(t.id));
+                  }}
+                  onChange={toggleSelectAllVisible}
+                  title="Select all loaded transactions"
+                />
+              </th>
               {["Date", "Card", "Vendor", "Category", "Type", "Amount"].map((h, i) => (
                 <th
                   key={h}
@@ -188,10 +357,14 @@ export function Transactions({
           <tbody>
             {visible.map((t) => {
               const card = cardById.get(t.cardId);
-              const category = t.category ? categoryById.get(t.category) : null;
+              const categoryId = categoryIdForTransaction(t, childById, parentById);
+              const category = categoryId ? categoryById.get(categoryId) : null;
               const typeMeta = TYPE_META[t.type];
               return (
                 <tr key={t.id} style={{ background: t.needsReview ? "oklch(0.58 0.13 35 / 0.06)" : undefined }}>
+                  <td style={{ padding: "9px 12px", borderBottom: "1px solid var(--border)" }}>
+                    <input type="checkbox" checked={selectedIds.has(t.id)} onChange={() => toggleSelected(t.id)} />
+                  </td>
                   <td style={{ padding: "9px 12px", borderBottom: "1px solid var(--border)", fontFamily: "var(--mono)", whiteSpace: "nowrap" }}>
                     {fmtDateShort(t.date)}
                   </td>
@@ -204,25 +377,18 @@ export function Transactions({
                     )}
                   </td>
                   <td style={{ padding: "9px 12px", borderBottom: "1px solid var(--border)" }}>
-                    <VendorInput vendor={t.vendor} onCommit={(v) => commitVendor(t, v)} />
+                    <VendorCell
+                      txn={t}
+                      currentParentId={parentIdForTransaction(t, childById)}
+                      currentVendorName={vendorNameForTransaction(t, childById)}
+                      parents={sortedParents}
+                      categories={sortedCategories}
+                      onReassign={(parentId) => commitVendorReassign(t, parentId)}
+                      onCreateNew={(name, category) => commitNewVendor(t, name, category)}
+                    />
                   </td>
                   <td style={{ padding: "9px 12px", borderBottom: "1px solid var(--border)" }}>
-                    {t.type === "purchase" ? (
-                      <select
-                        value={t.category || ""}
-                        onChange={(e) => commitCategory(t, e.target.value)}
-                        style={{ border: "1px solid var(--border)", borderRadius: 6, padding: "5px 6px", fontSize: 12.5 }}
-                      >
-                        <option value="">Uncategorized</option>
-                        {spendCategories.map((c) => (
-                          <option key={c.id} value={c.id}>
-                            {c.name}
-                          </option>
-                        ))}
-                      </select>
-                    ) : (
-                      <span style={{ fontSize: 12.5, color: "var(--muted)" }}>{category?.name || "—"}</span>
-                    )}
+                    <span style={{ fontSize: 12.5, color: "var(--muted)" }}>{category?.name || "—"}</span>
                   </td>
                   <td style={{ padding: "9px 12px", borderBottom: "1px solid var(--border)" }}>
                     <select
@@ -245,8 +411,8 @@ export function Transactions({
                       ))}
                     </select>
                   </td>
-                  <td style={{ padding: "9px 12px", borderBottom: "1px solid var(--border)", textAlign: "right", fontFamily: "var(--mono)", fontWeight: 500 }}>
-                    {fmtCurrency(t.amount)}
+                  <td style={{ padding: "9px 12px", borderBottom: "1px solid var(--border)", textAlign: "right" }}>
+                    <AmountCell txn={t} onCommitReimbursed={(raw) => commitReimbursedAmount(t, raw)} />
                   </td>
                 </tr>
               );
@@ -320,31 +486,134 @@ export function Transactions({
   );
 }
 
-function VendorInput({ vendor, onCommit }: { vendor: string; onCommit: (v: string) => void }) {
-  const [value, setValue] = useState(vendor);
-  const [prevVendor, setPrevVendor] = useState(vendor);
-  if (vendor !== prevVendor) {
-    setPrevVendor(vendor);
-    setValue(vendor);
-  }
+function AmountCell({
+  txn,
+  onCommitReimbursed,
+}: {
+  txn: Transaction;
+  onCommitReimbursed: (raw: string) => void;
+}) {
+  const hasReimbursement = !!txn.reimbursedAmount;
+  const net = netAmountForTransaction(txn);
   return (
-    <input
-      value={value}
-      onChange={(e) => setValue(e.target.value)}
-      onBlur={() => onCommit(value)}
-      onKeyDown={(e) => {
-        if (e.key === "Enter") (e.target as HTMLInputElement).blur();
+    <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 2 }}>
+      <div style={{ fontFamily: "var(--mono)", fontWeight: 500 }}>
+        {fmtCurrency(hasReimbursement ? net : txn.amount)}
+      </div>
+      {hasReimbursement && (
+        <div style={{ fontSize: 11, color: "var(--muted)", textDecoration: "line-through" }}>{fmtCurrency(txn.amount)}</div>
+      )}
+      <label
+        title="Amount recovered later (e.g. employer/insurance reimbursement) that won't show up as its own transaction"
+        style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 11, color: "var(--muted)", whiteSpace: "nowrap" }}
+      >
+        Reimb.
+        <input
+          type="number"
+          step="0.01"
+          min={0}
+          max={txn.amount}
+          defaultValue={txn.reimbursedAmount ?? ""}
+          placeholder="0.00"
+          onBlur={(e) => onCommitReimbursed(e.target.value)}
+          className="inline-editable"
+          style={{ width: 56, fontSize: 11, padding: "3px 5px", borderRadius: 6, textAlign: "right", background: "transparent" }}
+        />
+      </label>
+    </div>
+  );
+}
+
+function VendorCell({
+  txn,
+  currentParentId,
+  currentVendorName,
+  parents,
+  categories,
+  onReassign,
+  onCreateNew,
+}: {
+  txn: Transaction;
+  currentParentId: string | null;
+  currentVendorName: string | null;
+  parents: { id: string; name: string }[];
+  categories: { id: string; name: string }[];
+  onReassign: (parentId: string) => void;
+  onCreateNew: (name: string, category: string) => Promise<boolean>;
+}) {
+  const [creating, setCreating] = useState(false);
+  const [newName, setNewName] = useState(currentVendorName || "");
+  const [newCategory, setNewCategory] = useState("");
+
+  if (creating) {
+    return (
+      <div style={{ display: "flex", flexDirection: "column", gap: 4, minWidth: 180 }}>
+        <input
+          value={newName}
+          onChange={(e) => setNewName(e.target.value)}
+          placeholder="Vendor name"
+          style={{ ...inputStyle, fontSize: 12.5, padding: "5px 6px" }}
+        />
+        <select value={newCategory} onChange={(e) => setNewCategory(e.target.value)} style={{ ...inputStyle, fontSize: 12.5, padding: "5px 6px" }}>
+          <option value="">— Choose a category —</option>
+          {categories.map((c) => (
+            <option key={c.id} value={c.id}>
+              {c.name}
+            </option>
+          ))}
+        </select>
+        <div style={{ display: "flex", gap: 6 }}>
+          <button
+            onClick={async () => {
+              if (!newName.trim() || !newCategory) return;
+              const ok = await onCreateNew(newName.trim(), newCategory);
+              if (ok) setCreating(false);
+            }}
+            disabled={!newName.trim() || !newCategory}
+            style={{
+              border: "1px solid var(--accent)",
+              background: "var(--accent)",
+              color: "white",
+              borderRadius: 6,
+              padding: "4px 8px",
+              fontSize: 12,
+              cursor: !newName.trim() || !newCategory ? "not-allowed" : "pointer",
+              opacity: !newName.trim() || !newCategory ? 0.6 : 1,
+            }}
+          >
+            Save
+          </button>
+          <button
+            onClick={() => setCreating(false)}
+            style={{ border: "1px solid var(--border)", background: "transparent", borderRadius: 6, padding: "4px 8px", fontSize: 12 }}
+          >
+            Cancel
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <select
+      value={currentParentId ?? ""}
+      onChange={(e) => {
+        if (e.target.value === "__new__") {
+          setNewName(currentVendorName || cleanVendorName(txn.rawDescription));
+          setCreating(true);
+        } else {
+          onReassign(e.target.value);
+        }
       }}
-      className="inline-editable"
-      title="Click to edit vendor"
-      style={{
-        background: "transparent",
-        fontSize: 13,
-        padding: "4px 6px",
-        borderRadius: 6,
-        width: 150,
-        fontFamily: "var(--font-sans), sans-serif",
-      }}
-    />
+      style={{ border: "1px solid var(--border)", borderRadius: 6, padding: "5px 6px", fontSize: 12.5, maxWidth: 200 }}
+    >
+      {!currentParentId && <option value="">— Unassigned —</option>}
+      {parents.map((p) => (
+        <option key={p.id} value={p.id}>
+          {p.name}
+        </option>
+      ))}
+      <option value="__new__">+ Create new vendor…</option>
+    </select>
   );
 }

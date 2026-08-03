@@ -38,7 +38,11 @@ yarn-error.log*
 
 # local data store (personal finance data — never commit)
 /data
+/data-test
 
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# claude code local settings (machine-specific permissions)
+/.claude/settings.local.json

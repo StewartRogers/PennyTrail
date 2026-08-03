@@ -15,28 +15,25 @@ export const CATEGORY_PALETTE = [
   "oklch(0.62 0.10 130)",
 ];
 
-export const SYSTEM_CATEGORY_IDS = [
-  "payment",
-  "credit_refund",
-  "cashback",
-  "fees_interest",
-];
+export function sortCategoriesByName<T extends { name: string }>(categories: T[]): T[] {
+  return [...categories].sort((a, b) => a.name.localeCompare(b.name));
+}
 
 export function defaultCategories(): Category[] {
   return [
-    { id: "groceries", name: "Groceries", color: "oklch(0.62 0.10 145)", system: false },
-    { id: "dining", name: "Dining", color: "oklch(0.62 0.10 50)", system: false },
-    { id: "travel", name: "Travel", color: "oklch(0.62 0.10 250)", system: false },
-    { id: "transportation", name: "Transportation", color: "oklch(0.62 0.10 210)", system: false },
-    { id: "utilities", name: "Utilities", color: "oklch(0.62 0.10 190)", system: false },
-    { id: "entertainment", name: "Entertainment", color: "oklch(0.62 0.10 300)", system: false },
-    { id: "shopping", name: "Shopping", color: "oklch(0.62 0.10 330)", system: false },
-    { id: "health", name: "Health", color: "oklch(0.62 0.10 25)", system: false },
-    { id: "subscriptions", name: "Subscriptions", color: "oklch(0.62 0.10 270)", system: false },
-    { id: "payment", name: "Payment", color: "oklch(0.75 0.02 260)", system: true },
-    { id: "credit_refund", name: "Credit / Refund", color: "oklch(0.65 0.09 165)", system: true },
-    { id: "cashback", name: "Cashback & Rewards", color: "oklch(0.60 0.12 145)", system: true },
-    { id: "fees_interest", name: "Fees & Interest", color: "oklch(0.58 0.13 35)", system: true },
+    { id: "groceries", name: "Groceries", color: "oklch(0.62 0.10 145)" },
+    { id: "dining", name: "Dining", color: "oklch(0.62 0.10 50)" },
+    { id: "travel", name: "Travel", color: "oklch(0.62 0.10 250)" },
+    { id: "transportation", name: "Transportation", color: "oklch(0.62 0.10 210)" },
+    { id: "utilities", name: "Utilities", color: "oklch(0.62 0.10 190)" },
+    { id: "entertainment", name: "Entertainment", color: "oklch(0.62 0.10 300)" },
+    { id: "shopping", name: "Shopping", color: "oklch(0.62 0.10 330)" },
+    { id: "health", name: "Health", color: "oklch(0.62 0.10 25)" },
+    { id: "subscriptions", name: "Subscriptions", color: "oklch(0.62 0.10 270)" },
+    { id: "payment", name: "Payment", color: "oklch(0.75 0.02 260)" },
+    { id: "credit_refund", name: "Credit / Refund", color: "oklch(0.65 0.09 165)" },
+    { id: "cashback", name: "Cashback & Rewards", color: "oklch(0.60 0.12 145)" },
+    { id: "fees_interest", name: "Fees & Interest", color: "oklch(0.58 0.13 35)" },
   ];
 }
 
@@ -46,14 +43,4 @@ export const TYPE_META: Record<TxnType, { label: string; color: string }> = {
   credit: { label: "Credit", color: "oklch(0.55 0.10 200)" },
   cashback: { label: "Cashback", color: "oklch(0.55 0.12 145)" },
   fee: { label: "Fee / Interest", color: "oklch(0.55 0.13 35)" },
-};
-
-// The system category a non-purchase type always carries — these are
-// derived from type, not user-assigned, so switching a transaction's type
-// away from "purchase" should snap its category to the matching one here.
-export const SYSTEM_CATEGORY_FOR_TYPE: Partial<Record<TxnType, string>> = {
-  payment: "payment",
-  credit: "credit_refund",
-  cashback: "cashback",
-  fee: "fees_interest",
 };

@@ -1,0 +1,26 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "dev",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["run", "dev"],
+      "port": 3607
+    },
+    {
+      "name": "start",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["run", "start"],
+      "port": 2607
+    },
+    {
+      "name": "test:server",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["run", "test:server"],
+      "port": 4607,
+      "env": {
+        "PENNYTRAIL_DATA_DIR": "data-test"
+      }
+    }
+  ]
+}

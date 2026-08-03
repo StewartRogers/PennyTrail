@@ -37,7 +37,9 @@ transactions) is stored in `data/store.json`, created on first run. That
 directory is gitignored — it's your personal financial data, not sample
 content, and should never be committed. Reads/writes are serialized through
 a single queue with atomic temp-file+rename writes so concurrent requests
-can't corrupt the file.
+can't corrupt the file. A CSV row with a missing or non-numeric amount is
+skipped during import (rather than stored as corrupted data) and counted
+in the post-import summary.
 
 ## Features / screens
 
@@ -49,7 +51,10 @@ can't corrupt the file.
   (with reusable per-bank templates), confirm the auto-classified preview,
   resolve any transactions that need manual review, done.
 - **Transactions** — full searchable/editable ledger with filters and
-  pagination.
+  pagination. Each transaction can also record a partial or full
+  reimbursement (e.g. an employer/insurance payback that never appears as
+  its own card transaction) — every spend total elsewhere in the app nets
+  it out automatically.
 - **Categories** — manage the spend category taxonomy (the four system
   categories — Payment, Credit/Refund, Cashback, Fees & Interest — are
   derived automatically and read-only).
