@@ -1,0 +1,12 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npm test)",
+      "Bash(npm run lint)",
+      "Bash(npm run build)",
+      "Bash(git fetch *)",
+      "mcp__plugin_vercel_vercel__web_fetch_vercel_url",
+      "mcp__plugin_vercel_vercel__list_deployments"
+    ]
+  }
+}
