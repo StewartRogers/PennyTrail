@@ -374,7 +374,12 @@ export function Transactions({
               return (
                 <tr key={t.id} style={{ background: t.needsReview ? "oklch(0.58 0.13 35 / 0.06)" : undefined }}>
                   <td style={{ padding: "9px 12px", borderBottom: "1px solid var(--border)" }}>
-                    <input type="checkbox" checked={selectedIds.has(t.id)} onChange={() => toggleSelected(t.id)} />
+                    <input
+                      type="checkbox"
+                      checked={selectedIds.has(t.id)}
+                      onChange={() => toggleSelected(t.id)}
+                      aria-label={`Select transaction ${fmtDateShort(t.date)} ${t.rawDescription} ${fmtCurrency(t.amount)}`}
+                    />
                   </td>
                   <td style={{ padding: "9px 12px", borderBottom: "1px solid var(--border)", fontFamily: "var(--mono)", whiteSpace: "nowrap" }}>
                     {fmtDateShort(t.date)}
@@ -520,6 +525,12 @@ function AmountCell({
       >
         Reimb.
         <input
+          // Keyed on the stored value so the box re-mounts whenever the
+          // server's answer differs from what was typed. Without this the
+          // uncontrolled input kept showing e.g. "500" on a $50 charge that
+          // was clamped to $50, and the early-return in commitReimbursedAmount
+          // meant a second blur could never correct it.
+          key={`${txn.id}:${txn.reimbursedAmount ?? ""}`}
           type="number"
           step="0.01"
           min={0}

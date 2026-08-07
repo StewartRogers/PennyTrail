@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { updateState } from "@/lib/store";
 import { uid } from "@/lib/id";
+import { MAX_NAME_LENGTH, readJsonObject, readString } from "@/lib/request";
 import type { Card, Network } from "@/lib/types";
 
 const CARD_COLORS = [
@@ -15,13 +16,16 @@ const CARD_COLORS = [
 ];
 
 export async function POST(request: Request) {
-  const body = await request.json().catch(() => ({}));
-  const name = String(body.name || "").trim();
-  const bank = String(body.bank || "").trim();
-  const last4 = String(body.last4 || "").trim();
+  const body = await readJsonObject(request);
+  const name = readString(body.name);
+  const bank = readString(body.bank);
+  const last4 = readString(body.last4);
   const network: Network = body.network === "Mastercard" ? "Mastercard" : "Visa";
   if (!name) {
     return NextResponse.json({ error: "Card nickname is required" }, { status: 400 });
+  }
+  if (name.length > MAX_NAME_LENGTH || bank.length > MAX_NAME_LENGTH || last4.length > MAX_NAME_LENGTH) {
+    return NextResponse.json({ error: "Card details are too long" }, { status: 400 });
   }
 
   const { result: card } = await updateState((state) => {

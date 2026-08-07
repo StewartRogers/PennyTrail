@@ -1,14 +1,15 @@
 import { NextResponse } from "next/server";
 import { updateState } from "@/lib/store";
+import { readJsonObject, readString } from "@/lib/request";
 
 // Merges one parent vendor into another: every child moves to the target
 // parent (an id reassignment, not a text recompute), then the source
 // parent is deleted. No transaction needs touching — category is derived
 // live through the child's parentId.
 export async function POST(request: Request) {
-  const body = await request.json().catch(() => ({}));
-  const fromId = String(body.fromId || "");
-  const intoId = String(body.intoId || "");
+  const body = await readJsonObject(request);
+  const fromId = readString(body.fromId);
+  const intoId = readString(body.intoId);
   if (!fromId || !intoId || fromId === intoId) {
     return NextResponse.json({ error: "fromId and intoId are required and must differ" }, { status: 400 });
   }

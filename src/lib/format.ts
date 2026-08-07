@@ -5,7 +5,12 @@ export function fmtCurrency(n: number | null | undefined): string {
 
 export function fmtCurrencyShort(n: number | null | undefined): string {
   const abs = Math.abs(n || 0);
-  if (abs >= 1000) return (n! < 0 ? "-" : "") + "$" + (abs / 1000).toFixed(1) + "k";
+  const sign = (n || 0) < 0 ? "-" : "";
+  // Without an M tier the "compact" form got *longer* than the real number
+  // past a million: 1250000 rendered as "$1250.0k".
+  if (abs >= 1_000_000_000) return sign + "$" + (abs / 1_000_000_000).toFixed(1) + "B";
+  if (abs >= 1_000_000) return sign + "$" + (abs / 1_000_000).toFixed(1) + "M";
+  if (abs >= 1000) return sign + "$" + (abs / 1000).toFixed(1) + "k";
   return fmtCurrency(n);
 }
 
@@ -19,8 +24,27 @@ export function fmtCurrencyWhole(n: number | null | undefined): string {
 export function fmtDateShort(iso: string | null | undefined): string {
   if (!iso) return "";
   const [y, m, d] = iso.split("-").map(Number);
+  // Anything that isn't a real yyyy-mm-dd used to render as the literal
+  // string "Invalid Date" in the middle of the transactions table. Show
+  // nothing rather than that.
+  if (!Number.isFinite(y) || !Number.isFinite(m) || !Number.isFinite(d)) return "";
   const dt = new Date(y, m - 1, d);
+  if (isNaN(dt.getTime())) return "";
   return dt.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
+}
+
+// Local-calendar yyyy-mm-dd. `new Date(y, m, d).toISOString()` converts to UTC
+// first, so east of UTC local midnight lands on the *previous* day and a
+// range cutoff silently shifted by one day (verified: TZ=Europe/Berlin turned
+// a 2026-01-01 cutoff into 2025-12-31).
+export function toISODate(dt: Date): string {
+  return (
+    dt.getFullYear().toString().padStart(4, "0") +
+    "-" +
+    String(dt.getMonth() + 1).padStart(2, "0") +
+    "-" +
+    String(dt.getDate()).padStart(2, "0")
+  );
 }
 
 export function monthKey(iso: string): string {

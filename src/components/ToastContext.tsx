@@ -1,6 +1,6 @@
 "use client";
 
-import { createContext, useCallback, useContext, useRef, useState } from "react";
+import { createContext, useCallback, useContext, useEffect, useRef, useState } from "react";
 
 interface Toast {
   id: number;
@@ -16,19 +16,40 @@ export function useToast() {
 export function ToastProvider({ children }: { children: React.ReactNode }) {
   const [toasts, setToasts] = useState<Toast[]>([]);
   const nextId = useRef(0);
+  const timers = useRef<ReturnType<typeof setTimeout>[]>([]);
 
   const pushToast = useCallback((message: string) => {
     const id = nextId.current++;
     setToasts((prev) => [...prev, { id, message }]);
-    setTimeout(() => {
+    const timer = setTimeout(() => {
       setToasts((prev) => prev.filter((t) => t.id !== id));
+      timers.current = timers.current.filter((t) => t !== timer);
     }, 2600);
+    timers.current.push(timer);
+  }, []);
+
+  // The dismissal timers were fire-and-forget, so nothing could cancel them
+  // on unmount. Harmless while the provider sits at the root and never
+  // unmounts, but it makes the component unsafe to mount anywhere else (and
+  // leaks a "state update on an unmounted component" in tests).
+  useEffect(() => {
+    const pending = timers.current;
+    return () => {
+      for (const timer of pending) clearTimeout(timer);
+    };
   }, []);
 
   return (
     <ToastCtx.Provider value={pushToast}>
       {children}
+      {/* Toasts are the only channel for every error in the app (failed
+          rename, failed merge, failed import) and they auto-dismiss in 2.6s,
+          so without a live region a screen-reader user got no feedback at all
+          on failure. */}
       <div
+        role="status"
+        aria-live="polite"
+        aria-atomic="false"
         style={{
           position: "fixed",
           bottom: 20,

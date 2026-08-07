@@ -1,5 +1,6 @@
 "use client";
 
+import { useState } from "react";
 import type { AppState, Template } from "@/lib/types";
 import { deleteTemplate } from "@/lib/api";
 import { useToast } from "./ToastContext";
@@ -24,6 +25,9 @@ function summarize(t: Template): string {
 
 export function Templates({ appState, onReload }: { appState: AppState; onReload: () => Promise<void> }) {
   const pushToast = useToast();
+  // A saved column mapping is the most tedious thing in the app to
+  // reconstruct, and Delete used to fire on the first click with no undo.
+  const [confirmingId, setConfirmingId] = useState<string | null>(null);
 
   async function handleDelete(t: Template) {
     try {
@@ -51,19 +55,39 @@ export function Templates({ appState, onReload }: { appState: AppState; onReload
                   {t.bank} · {t.network}
                 </div>
               </div>
-              <button
-                onClick={() => handleDelete(t)}
-                style={{
-                  background: "transparent",
-                  border: "1px solid var(--border)",
-                  borderRadius: 8,
-                  padding: "6px 12px",
-                  fontSize: 12,
-                  color: "var(--muted)",
-                }}
-              >
-                Delete
-              </button>
+              {confirmingId === t.id ? (
+                <div style={{ display: "flex", gap: 8 }}>
+                  <button
+                    onClick={() => {
+                      setConfirmingId(null);
+                      handleDelete(t);
+                    }}
+                    style={{ background: "transparent", border: "1px solid var(--border)", borderRadius: 8, padding: "6px 12px", fontSize: 12, color: "var(--attention)", fontWeight: 600 }}
+                  >
+                    Confirm
+                  </button>
+                  <button
+                    onClick={() => setConfirmingId(null)}
+                    style={{ background: "transparent", border: "1px solid var(--border)", borderRadius: 8, padding: "6px 12px", fontSize: 12, color: "var(--text)" }}
+                  >
+                    Cancel
+                  </button>
+                </div>
+              ) : (
+                <button
+                  onClick={() => setConfirmingId(t.id)}
+                  style={{
+                    background: "transparent",
+                    border: "1px solid var(--border)",
+                    borderRadius: 8,
+                    padding: "6px 12px",
+                    fontSize: 12,
+                    color: "var(--muted)",
+                  }}
+                >
+                  Delete
+                </button>
+              )}
             </div>
             <div style={{ fontSize: 12.5, color: "var(--muted)", marginTop: 10, fontFamily: "var(--mono)" }}>{summarize(t)}</div>
           </div>

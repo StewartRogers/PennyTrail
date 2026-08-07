@@ -72,8 +72,11 @@ export function updateTransaction(
   return request(`/api/transactions/${id}`, { method: "PATCH", body: JSON.stringify(patch) });
 }
 
+// The full wipe must be requested explicitly — the route rejects a DELETE
+// whose body is missing or unrecognized rather than treating it as "delete
+// everything", so a dropped/truncated body can't destroy the history.
 export function deleteAllTransactions(): Promise<{ deletedCount: number }> {
-  return request("/api/transactions", { method: "DELETE" });
+  return request("/api/transactions", { method: "DELETE", body: JSON.stringify({ all: true }) });
 }
 
 export function deleteTransactions(ids: string[]): Promise<{ deletedCount: number }> {

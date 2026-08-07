@@ -3,13 +3,18 @@ import { updateState } from "@/lib/store";
 import { uid } from "@/lib/id";
 import { cleanVendorName } from "@/lib/classify";
 import { findChildByRawName, findParentByName } from "@/lib/vendors";
+import { MAX_NAME_LENGTH, readJsonObject } from "@/lib/request";
 import type { ChildVendor, ParentVendor, TxnType } from "@/lib/types";
 
 const VALID_TYPES: TxnType[] = ["purchase", "payment", "credit", "cashback", "fee"];
 
 export async function PATCH(request: Request, ctx: RouteContext<"/api/transactions/[id]">) {
   const { id } = await ctx.params;
-  const body = await request.json().catch(() => ({}));
+  const body = await readJsonObject(request);
+
+  if (typeof body.newParentName === "string" && body.newParentName.trim().length > MAX_NAME_LENGTH) {
+    return NextResponse.json({ error: "Vendor name is too long" }, { status: 400 });
+  }
 
   const { result } = await updateState((state) => {
     const txn = state.transactions.find((t) => t.id === id);

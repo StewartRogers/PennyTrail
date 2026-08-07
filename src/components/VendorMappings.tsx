@@ -15,7 +15,16 @@ export function VendorMappings({ appState, onReload }: { appState: AppState; onR
   const [view, setView] = useState<View>("parents");
   const [search, setSearch] = useState("");
   const [confirmingDeleteId, setConfirmingDeleteId] = useState<string | null>(null);
+  // Removing a vendor name cascades — it can delete the parent too and sends
+  // every linked transaction back to needing review, with no undo. The parent
+  // Remove button already required a confirm; this one fired on first click,
+  // on rows 8px apart and styled identically.
+  const [confirmingDeleteChildId, setConfirmingDeleteChildId] = useState<string | null>(null);
   const [mergingId, setMergingId] = useState<string | null>(null);
+  // Merging is irreversible (splitting means moving each vendor back by hand),
+  // and it used to fire on a single <select> change — one keystroke in a long
+  // alphabetical list. Hold the chosen target until it's confirmed.
+  const [pendingMerge, setPendingMerge] = useState<{ fromId: string; fromName: string; intoId: string; intoName: string } | null>(null);
   const [movingChildId, setMovingChildId] = useState<string | null>(null);
 
   const categoryById = useMemo(() => new Map(appState.categories.map((c) => [c.id, c])), [appState.categories]);
@@ -114,6 +123,7 @@ export function VendorMappings({ appState, onReload }: { appState: AppState; onR
       const { movedCount } = await mergeParentVendors(fromId, intoId);
       await onReload();
       setMergingId(null);
+      setPendingMerge(null);
       pushToast(`Merged "${fromName}" — moved ${movedCount} vendor name${movedCount === 1 ? "" : "s"}`);
     } catch (err) {
       pushToast(err instanceof Error ? err.message : "Failed to merge vendors");
@@ -218,12 +228,36 @@ export function VendorMappings({ appState, onReload }: { appState: AppState; onR
                       ))}
                     </select>
 
-                    {mergingId === parent.id ? (
+                    {pendingMerge && pendingMerge.fromId === parent.id ? (
+                      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                        <span style={{ fontSize: 12.5, color: "var(--muted)", whiteSpace: "nowrap" }}>
+                          Merge into &ldquo;{pendingMerge.intoName}&rdquo;?
+                        </span>
+                        <button
+                          onClick={() => handleMerge(pendingMerge.fromId, pendingMerge.fromName, pendingMerge.intoId)}
+                          style={{ border: "1px solid var(--border)", background: "transparent", color: "var(--attention)", borderRadius: 8, padding: "7px 10px", fontSize: 12.5, fontWeight: 600 }}
+                        >
+                          Confirm
+                        </button>
+                        <button
+                          onClick={() => {
+                            setPendingMerge(null);
+                            setMergingId(null);
+                          }}
+                          style={{ border: "1px solid var(--border)", background: "transparent", color: "var(--text)", borderRadius: 8, padding: "7px 10px", fontSize: 12.5, fontWeight: 600 }}
+                        >
+                          Cancel
+                        </button>
+                      </div>
+                    ) : mergingId === parent.id ? (
                       <select
                         autoFocus
                         value=""
                         onChange={(e) => {
-                          if (e.target.value) handleMerge(parent.id, parent.name, e.target.value);
+                          const target = sortedParents.find((p) => p.id === e.target.value);
+                          if (target) {
+                            setPendingMerge({ fromId: parent.id, fromName: parent.name, intoId: target.id, intoName: target.name });
+                          }
                         }}
                         style={{ ...inputStyle, minWidth: 160 }}
                       >
@@ -346,13 +380,33 @@ export function VendorMappings({ appState, onReload }: { appState: AppState; onR
                         {parent?.name ?? "Unknown parent"}
                       </button>
                     )}
-                    <button
-                      onClick={() => handleDeleteChild(child.id, child.rawName)}
-                      title="Remove this vendor name (its transactions go back to needing review)"
-                      style={{ border: "1px solid var(--border)", background: "transparent", color: "var(--muted)", borderRadius: 8, padding: "7px 10px", fontSize: 12.5, fontWeight: 600, whiteSpace: "nowrap" }}
-                    >
-                      Remove
-                    </button>
+                    {confirmingDeleteChildId === child.id ? (
+                      <div style={{ display: "flex", gap: 8 }}>
+                        <button
+                          onClick={() => {
+                            setConfirmingDeleteChildId(null);
+                            handleDeleteChild(child.id, child.rawName);
+                          }}
+                          style={{ border: "1px solid var(--border)", background: "transparent", color: "var(--attention)", borderRadius: 8, padding: "7px 10px", fontSize: 12.5, fontWeight: 600, whiteSpace: "nowrap" }}
+                        >
+                          Confirm
+                        </button>
+                        <button
+                          onClick={() => setConfirmingDeleteChildId(null)}
+                          style={{ border: "1px solid var(--border)", background: "transparent", color: "var(--text)", borderRadius: 8, padding: "7px 10px", fontSize: 12.5, fontWeight: 600 }}
+                        >
+                          Cancel
+                        </button>
+                      </div>
+                    ) : (
+                      <button
+                        onClick={() => setConfirmingDeleteChildId(child.id)}
+                        title="Remove this vendor name (its transactions go back to needing review)"
+                        style={{ border: "1px solid var(--border)", background: "transparent", color: "var(--muted)", borderRadius: 8, padding: "7px 10px", fontSize: 12.5, fontWeight: 600, whiteSpace: "nowrap" }}
+                      >
+                        Remove
+                      </button>
+                    )}
                   </div>
                 );
               })}

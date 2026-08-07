@@ -187,6 +187,14 @@ export function ImportWizard({
   const [reviewNewName, setReviewNewName] = useState("");
   const [reviewCategory, setReviewCategory] = useState("");
   const [summary, setSummary] = useState({ total: 0, auto: 0, review: 0, skipped: 0 });
+  // In-flight guards. The import POST creates a transaction per row with no
+  // de-duplication server-side, so a second click while the first request was
+  // still open imported the whole statement twice; the others are the same
+  // shape (duplicate template, duplicate card, double-counted review).
+  const [importing, setImporting] = useState(false);
+  const [savingTemplate, setSavingTemplate] = useState(false);
+  const [savingReview, setSavingReview] = useState(false);
+  const [addingCard, setAddingCard] = useState(false);
 
   const selectedCard = appState.cards.find((c) => c.id === cardId) || null;
   const sortedCategories = useMemo(() => sortCategoriesByName(appState.categories), [appState.categories]);
@@ -215,7 +223,19 @@ export function ImportWizard({
   );
 
   const validRows = useMemo(() => parsedRows.filter((r) => r.date && !isNaN(r.amount)), [parsedRows]);
-  const classifiedAll = useMemo(() => validRows.map((r) => previewClassification(r, appState, appState.categories)), [validRows, appState]);
+  // Rows dropped here are silently absent from every count the wizard shows,
+  // so a statement with timestamped dates or ragged short rows presented as a
+  // smaller, apparently-clean import. Surfaced on the confirm step instead.
+  const droppedRowCount = parsedRows.length - validRows.length;
+  // Only classify on the step that displays the result. This is
+  // O(rows x parents) regex work and it depends on `mapping`, so it used to
+  // re-run over the entire file on the render path for every single column
+  // dropdown change on step 2 — seconds of freeze per keystroke on a large
+  // export with many existing vendors, to compute counts step 2 never shows.
+  const classifiedAll = useMemo(
+    () => (step >= 3 ? validRows.map((r) => previewClassification(r, appState, appState.categories)) : []),
+    [validRows, appState, step]
+  );
   const autoCount = classifiedAll.filter((c) => !c.needsReview).length;
   const reviewCount = classifiedAll.filter((c) => c.needsReview).length;
 
@@ -228,11 +248,21 @@ export function ImportWizard({
     setMapChoice("__new__");
     setMapping(BLANK_MAPPING);
     setTemplateName("");
+    // Carrying these over meant "Import another file" started the next run
+    // still holding the previous import's completion figures.
+    setSummary({ total: 0, auto: 0, review: 0, skipped: 0 });
+    setReviewQueue([]);
+    setReviewTotal(0);
+    setReviewResolvedCount(0);
   }
 
   async function handleAddCard() {
     const name = newCard.name.trim();
-    if (!name) return;
+    // The cards route has no name-uniqueness check, so a second click while
+    // the first POST was open created a duplicate card — and both handlers
+    // then called setCardId, binding the statement to whichever resolved last.
+    if (!name || addingCard) return;
+    setAddingCard(true);
     try {
       const card = await addCard({ name, bank: newCard.bank.trim(), last4: newCard.last4.trim(), network: newCard.network });
       setNewCard({ name: "", bank: "", last4: "", network: "Visa" });
@@ -241,6 +271,8 @@ export function ImportWizard({
       pushToast(`Added card "${name}"`);
     } catch (err) {
       pushToast(err instanceof Error ? err.message : "Failed to add card");
+    } finally {
+      setAddingCard(false);
     }
   }
 
@@ -308,6 +340,12 @@ export function ImportWizard({
         creditCol: guess.creditCol,
         categoryCol: guess.categoryCol,
         typeCol: guess.typeCol,
+        // guessMapping has no vendor heuristic, so this one field used to
+        // survive the re-guess — switching from a saved template back to
+        // "Create new mapping…" left vendorCol pointing at whatever column
+        // that template used, and the import fed e.g. a reference-number
+        // column in as the vendor name, creating one junk vendor per row.
+        vendorCol: -1,
       }));
       setTemplateName(selectedCard?.bank?.trim() || selectedCard?.name || "");
       return;
@@ -336,9 +374,11 @@ export function ImportWizard({
     (mapping.amountMode === "single" ? mapping.amountCol > -1 : mapping.debitCol > -1 || mapping.creditCol > -1);
 
   async function continueToStep3() {
+    if (savingTemplate) return;
     if (mapChoice === "__new__" && templateName.trim() && selectedCard) {
+      setSavingTemplate(true);
       try {
-        await addTemplate({
+        const created = await addTemplate({
           name: templateName.trim(),
           bank: selectedCard.bank,
           network: selectedCard.network,
@@ -357,6 +397,11 @@ export function ImportWizard({
           headerSnapshot: headers,
         });
         await onReload();
+        // Switch the selection to the template that was just saved. Leaving
+        // it on "__new__" meant every Back → Continue round-trip saved
+        // another copy of the same mapping, and the next import then
+        // auto-applied whichever duplicate sorted first.
+        if (created?.id) setMapChoice(created.id);
         pushToast(`Saved import template "${templateName.trim()}"`);
       } catch (err) {
         // Stay on this step so the user can rename the template or clear
@@ -364,13 +409,16 @@ export function ImportWizard({
         // asked to save and moving on as if it succeeded.
         pushToast(err instanceof Error ? err.message : "Failed to save import template");
         return;
+      } finally {
+        setSavingTemplate(false);
       }
     }
     setStep(3);
   }
 
   async function confirmImport() {
-    if (!cardId || validRows.length === 0) return;
+    if (!cardId || validRows.length === 0 || importing) return;
+    setImporting(true);
     const rows: ImportRow[] = validRows.map((r) => ({
       date: r.date as string,
       rawDescription: r.rawDescription,
@@ -385,10 +433,14 @@ export function ImportWizard({
       await onReload();
       setSummary(res.counts);
       const needsReview = res.transactions.filter((t) => t.needsReview);
+      // These two must reset for *every* import, not just ones that need
+      // review — they were reset inside the branch below, so an import with
+      // nothing to review kept the previous import's tally and the completion
+      // screen reported "5 resolved in review" for a batch that had none.
+      setReviewTotal(needsReview.length);
+      setReviewResolvedCount(0);
       if (needsReview.length > 0) {
         setReviewQueue(needsReview);
-        setReviewTotal(needsReview.length);
-        setReviewResolvedCount(0);
         seedReviewFields(needsReview);
         setStep(4);
       } else {
@@ -396,6 +448,8 @@ export function ImportWizard({
       }
     } catch (err) {
       pushToast(err instanceof Error ? err.message : "Failed to import transactions");
+    } finally {
+      setImporting(false);
     }
   }
 
@@ -424,72 +478,78 @@ export function ImportWizard({
   }
 
   async function saveAndNextReview() {
+    if (savingReview) return;
     const current = reviewQueue[0];
+    if (!current) return;
     let rest = reviewQueue.slice(1);
     let resolvedCount = 1;
-
-    if (reviewParentId === "__new__") {
-      if (!reviewNewName.trim() || !reviewCategory) return;
-      try {
-        await updateTransaction(current.id, { type: reviewType, newParentName: reviewNewName.trim(), category: reviewCategory });
-      } catch (err) {
-        // Parent/vendor names are unique — stay on this item so the user
-        // can pick a different name or link to the existing vendor instead.
-        pushToast(err instanceof Error ? err.message : "Failed to create vendor");
-        return;
-      }
-    } else {
-      try {
-        await updateTransaction(current.id, { type: reviewType, parentId: reviewParentId });
-      } catch (err) {
-        pushToast(err instanceof Error ? err.message : "Failed to link vendor");
-        return;
-      }
-    }
-
-    // A freshly-created (or newly-linked) vendor should immediately catch
-    // other occurrences of the same vendor still waiting in this batch
-    // (e.g. "Storage ABC 12312" then "Storage ABC 43412"), instead of
-    // asking the user to resolve the same vendor over and over in one
-    // import. Refetch rather than relying on the appState prop, since it
-    // won't reflect this update until the next render.
-    if (rest.length > 0) {
-      const fresh = await fetchState();
-      const stillNeedsReview: Transaction[] = [];
-      let autoLinkFailures = 0;
-      for (const item of rest) {
-        const cleanedName = cleanVendorName(item.rawDescription);
-        const match = resolveVendor(cleanedName, fresh.childVendors, fresh.parentVendors);
+    setSavingReview(true);
+    try {
+      if (reviewParentId === "__new__") {
+        if (!reviewNewName.trim() || !reviewCategory) return;
         try {
-          if (match.kind === "exact") {
-            // An exact match here is the literal same vendor the user just
-            // resolved (or another exact duplicate already on file) — safe
-            // to auto-confirm. A "fuzzy" match is only ever a guess, so
-            // (like the primary import path) it still needs a human to
-            // confirm it and falls through to stillNeedsReview below.
-            await updateTransaction(item.id, { childVendorId: match.childVendorId });
-            resolvedCount++;
-          } else {
-            stillNeedsReview.push(item);
-          }
-        } catch {
-          // Don't let one failed auto-link abandon the rest of the batch
-          // (and leave the client's queue out of sync with what actually
-          // saved) — just leave this one in the review queue instead.
-          autoLinkFailures++;
-          stillNeedsReview.push(item);
+          await updateTransaction(current.id, { type: reviewType, newParentName: reviewNewName.trim(), category: reviewCategory });
+        } catch (err) {
+          // Parent/vendor names are unique — stay on this item so the user
+          // can pick a different name or link to the existing vendor instead.
+          pushToast(err instanceof Error ? err.message : "Failed to create vendor");
+          return;
+        }
+      } else {
+        try {
+          await updateTransaction(current.id, { type: reviewType, parentId: reviewParentId });
+        } catch (err) {
+          pushToast(err instanceof Error ? err.message : "Failed to link vendor");
+          return;
         }
       }
-      rest = stillNeedsReview;
-      if (autoLinkFailures > 0) {
-        pushToast(`${autoLinkFailures} other matching transaction${autoLinkFailures === 1 ? "" : "s"} couldn't be auto-linked and still need review`);
-      }
-    }
 
-    await onReload();
-    setReviewResolvedCount((c) => c + resolvedCount);
-    setReviewQueue(rest);
-    seedReviewFields(rest);
+      // A freshly-created (or newly-linked) vendor should immediately catch
+      // other occurrences of the same vendor still waiting in this batch
+      // (e.g. "Storage ABC 12312" then "Storage ABC 43412"), instead of
+      // asking the user to resolve the same vendor over and over in one
+      // import. Refetch rather than relying on the appState prop, since it
+      // won't reflect this update until the next render.
+      if (rest.length > 0) {
+        const fresh = await fetchState();
+        const stillNeedsReview: Transaction[] = [];
+        let autoLinkFailures = 0;
+        for (const item of rest) {
+          const cleanedName = cleanVendorName(item.rawDescription);
+          const match = resolveVendor(cleanedName, fresh.childVendors, fresh.parentVendors);
+          try {
+            if (match.kind === "exact") {
+              // An exact match here is the literal same vendor the user just
+              // resolved (or another exact duplicate already on file) — safe
+              // to auto-confirm. A "fuzzy" match is only ever a guess, so
+              // (like the primary import path) it still needs a human to
+              // confirm it and falls through to stillNeedsReview below.
+              await updateTransaction(item.id, { childVendorId: match.childVendorId });
+              resolvedCount++;
+            } else {
+              stillNeedsReview.push(item);
+            }
+          } catch {
+            // Don't let one failed auto-link abandon the rest of the batch
+            // (and leave the client's queue out of sync with what actually
+            // saved) — just leave this one in the review queue instead.
+            autoLinkFailures++;
+            stillNeedsReview.push(item);
+          }
+        }
+        rest = stillNeedsReview;
+        if (autoLinkFailures > 0) {
+          pushToast(`${autoLinkFailures} other matching transaction${autoLinkFailures === 1 ? "" : "s"} couldn't be auto-linked and still need review`);
+        }
+      }
+
+      await onReload();
+      setReviewResolvedCount((c) => c + resolvedCount);
+      setReviewQueue(rest);
+      seedReviewFields(rest);
+    } finally {
+      setSavingReview(false);
+    }
   }
 
   const currentReview = reviewQueue[0];
@@ -564,9 +624,22 @@ export function ImportWizard({
                   </div>
                 </div>
               ) : (
+                // Selecting a card was a bare div onClick, and "Continue →"
+                // only renders once cardId is set — so with no role, tabIndex
+                // or key handler the entire import flow was unreachable
+                // without a mouse.
                 <div
                   key={c.id}
+                  role="radio"
+                  aria-checked={cardId === c.id}
+                  tabIndex={0}
                   onClick={() => setCardId(c.id)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" || e.key === " ") {
+                      e.preventDefault();
+                      setCardId(c.id);
+                    }
+                  }}
                   style={{
                     display: "flex",
                     alignItems: "center",
@@ -648,7 +721,9 @@ export function ImportWizard({
                 </button>
               ))}
               <div style={{ marginLeft: "auto" }}>
-                <PrimaryButton onClick={handleAddCard}>Add Card</PrimaryButton>
+                <PrimaryButton onClick={handleAddCard} disabled={addingCard}>
+                  {addingCard ? "Adding…" : "Add Card"}
+                </PrimaryButton>
               </div>
             </div>
           </div>
@@ -924,7 +999,7 @@ export function ImportWizard({
           <div style={{ display: "flex", gap: 10 }}>
             <SecondaryButton onClick={() => setStep(1)}>← Back</SecondaryButton>
             {headers.length > 0 && (
-              <PrimaryButton disabled={!mappingComplete} onClick={continueToStep3}>
+              <PrimaryButton disabled={!mappingComplete || savingTemplate} onClick={continueToStep3}>
                 Continue →
               </PrimaryButton>
             )}
@@ -947,6 +1022,13 @@ export function ImportWizard({
               </div>
             ))}
           </div>
+          {droppedRowCount > 0 && (
+            <div style={{ fontSize: 12.5, color: "var(--attention)", marginBottom: 18 }}>
+              {droppedRowCount} row{droppedRowCount === 1 ? "" : "s"} in this file couldn&apos;t be read and won&apos;t be imported — usually an
+              unrecognized date format or a blank/non-numeric amount. Check the Date format and column mapping on the previous step if that
+              looks wrong.
+            </div>
+          )}
           <div style={{ overflowX: "auto", border: "1px solid var(--border)", borderRadius: 10, marginBottom: 20 }}>
             <table style={{ borderCollapse: "collapse", width: "100%", fontSize: 12.5 }}>
               <thead>
@@ -978,8 +1060,8 @@ export function ImportWizard({
           </div>
           <div style={{ display: "flex", gap: 10 }}>
             <SecondaryButton onClick={() => setStep(2)}>← Back</SecondaryButton>
-            <PrimaryButton onClick={confirmImport} disabled={validRows.length === 0}>
-              Import {validRows.length} Transactions
+            <PrimaryButton onClick={confirmImport} disabled={validRows.length === 0 || importing}>
+              {importing ? "Importing…" : `Import ${validRows.length} Transactions`}
             </PrimaryButton>
           </div>
         </div>
@@ -1056,7 +1138,7 @@ export function ImportWizard({
           </div>
           <div style={{ display: "flex", gap: 10 }}>
             <SecondaryButton onClick={skipReview}>Skip for now</SecondaryButton>
-            <PrimaryButton onClick={saveAndNextReview} disabled={!reviewCanSave}>
+            <PrimaryButton onClick={saveAndNextReview} disabled={!reviewCanSave || savingReview}>
               Save &amp; Next →
             </PrimaryButton>
           </div>

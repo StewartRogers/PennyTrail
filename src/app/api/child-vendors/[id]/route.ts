@@ -1,10 +1,11 @@
 import { NextResponse } from "next/server";
 import { updateState } from "@/lib/store";
+import { readJsonObject, readString } from "@/lib/request";
 
 export async function PATCH(request: Request, ctx: RouteContext<"/api/child-vendors/[id]">) {
   const { id } = await ctx.params;
-  const body = await request.json().catch(() => ({}));
-  const parentId = String(body.parentId || "");
+  const body = await readJsonObject(request);
+  const parentId = readString(body.parentId);
   if (!parentId) return NextResponse.json({ error: "parentId is required" }, { status: 400 });
 
   const { result } = await updateState((state) => {

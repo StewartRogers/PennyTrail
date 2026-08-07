@@ -2,7 +2,7 @@
 
 import { useMemo, useState } from "react";
 import type { AppState, Transaction } from "@/lib/types";
-import { fmtCurrency, fmtCurrencyWhole, monthKey, monthLabel, quarterKey, yearKey } from "@/lib/format";
+import { fmtCurrency, fmtCurrencyWhole, monthKey, monthLabel, quarterKey, toISODate, yearKey } from "@/lib/format";
 import { categoryIdForTransaction, netAmountForTransaction, parentIdForTransaction } from "@/lib/vendors";
 import { Card as PanelCard, SectionTitle, ColorDot, SegmentedControl, inputStyle } from "./ui";
 import type { DrillDown } from "./DrillDownModal";
@@ -33,7 +33,9 @@ function rangeCutoff(preset: RangePreset): string | null {
   }
   const months = preset === "6mo" ? 6 : 12;
   const cutoff = new Date(now.getFullYear(), now.getMonth() - months + 1, 1);
-  return cutoff.toISOString().slice(0, 10);
+  // toISOString() would convert this local date to UTC first, pulling the
+  // cutoff back a day for anyone east of UTC.
+  return toISODate(cutoff);
 }
 
 const TREND_BUCKET_COUNT: Record<TrendGroup, number> = { month: 12, quarter: 8, year: 6 };

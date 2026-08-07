@@ -1,15 +1,19 @@
 import { NextResponse } from "next/server";
 import { updateState } from "@/lib/store";
 import { findParentByName } from "@/lib/vendors";
+import { MAX_NAME_LENGTH, readJsonObject } from "@/lib/request";
 
 export async function PATCH(request: Request, ctx: RouteContext<"/api/parent-vendors/[id]">) {
   const { id } = await ctx.params;
-  const body = await request.json().catch(() => ({}));
+  const body = await readJsonObject(request);
 
   const hasName = typeof body.name === "string" && !!body.name.trim();
   const hasCategory = typeof body.category === "string" && !!body.category;
   if (!hasName && !hasCategory) {
     return NextResponse.json({ error: "name or category is required" }, { status: 400 });
+  }
+  if (hasName && body.name.trim().length > MAX_NAME_LENGTH) {
+    return NextResponse.json({ error: "Vendor name is too long" }, { status: 400 });
   }
 
   const { result } = await updateState((state) => {

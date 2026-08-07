@@ -4,7 +4,7 @@ import { useMemo, useState } from "react";
 import type { AppState } from "@/lib/types";
 import { addCategory, updateCategory } from "@/lib/api";
 import { CATEGORY_PALETTE, sortCategoriesByName } from "@/lib/categories";
-import { categoryIdForTransaction, netAmountForTransaction } from "@/lib/vendors";
+import { categoryIdForTransaction, categorySpendForTransaction } from "@/lib/vendors";
 import { fmtCurrency } from "@/lib/format";
 import { useToast } from "./ToastContext";
 import { PageTitle, PrimaryButton, inputStyle } from "./ui";
@@ -23,7 +23,7 @@ export function Categories({ appState, onReload }: { appState: AppState; onReloa
       const category = categoryIdForTransaction(t, childById, parentById);
       if (!category) continue;
       const entry = map.get(category) || { total: 0, count: 0 };
-      entry.total += netAmountForTransaction(t);
+      entry.total += categorySpendForTransaction(t);
       entry.count += 1;
       map.set(category, entry);
     }
@@ -50,11 +50,16 @@ export function Categories({ appState, onReload }: { appState: AppState; onReloa
     }
   }
 
-  async function handleRename(id: string, name: string) {
+  // These inputs are uncontrolled, so a rejected rename used to leave the
+  // typed-but-unsaved name on screen for the rest of the session while the
+  // dashboard and every vendor dropdown still showed the old one. `revert`
+  // puts the DOM value back; the key below re-mounts on a successful rename.
+  async function handleRename(id: string, name: string, revert: () => void) {
     try {
       await updateCategory(id, { name });
       await onReload();
     } catch (err) {
+      revert();
       pushToast(err instanceof Error ? err.message : "Failed to rename category");
     }
   }
@@ -89,9 +94,18 @@ export function Categories({ appState, onReload }: { appState: AppState; onReloa
             >
               <span style={{ width: 14, height: 14, borderRadius: "50%", background: c.color, flexShrink: 0 }} />
               <input
+                key={c.id + c.name}
                 defaultValue={c.name}
                 onBlur={(e) => {
-                  if (e.target.value.trim() && e.target.value !== c.name) handleRename(c.id, e.target.value.trim());
+                  const target = e.target;
+                  const value = target.value.trim();
+                  if (value && value !== c.name) {
+                    handleRename(c.id, value, () => {
+                      target.value = c.name;
+                    });
+                  } else {
+                    target.value = c.name;
+                  }
                 }}
                 className="inline-editable"
                 title="Click to rename"

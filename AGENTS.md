@@ -31,6 +31,28 @@ This version has breaking changes — APIs, conventions, and file structure may 
   `vi.resetModules()` is required (store.ts's data-dir path is only
   evaluated once per module instance). Run `npm test` after any change to
   `src/lib/` or `src/app/api/`.
+  If the suite exits **135 with just `Bus error`** and no test output, that is
+  a truncated native binary in `node_modules` (Vite's `lightningcss`), not a
+  code or network problem — `npm cache verify`, delete the package directory,
+  and `npm install`. See the README's maintenance notes.
+- **Store contract — a rejected request must persist nothing.**
+  `updateState` skips the write when the mutator returns an object with an
+  `error` key, so routes signal failure by *returning* `{ error: "..." }`
+  from inside the mutator (never by throwing, and never by mutating and then
+  reporting failure some other way). Keep new routes on that convention: it
+  is what stops a validation failure from leaving half-applied changes on
+  disk.
+- **Destructive endpoints require an explicit opt-in.** `DELETE
+  /api/transactions` wipes the history only for `{ all: true }`; a missing,
+  unparseable, or unrecognized body is a 400. Don't reintroduce a
+  "no body means delete everything" default anywhere.
+- **Amounts are always stored positive** (`Math.abs` at import), so a total
+  that spans transaction types must sign them itself — use
+  `categorySpendForTransaction` in `src/lib/vendors.ts` rather than summing
+  `netAmountForTransaction` across types, or refunds get added to spend
+  instead of subtracted. Note the Dashboard deliberately reports
+  `type === "purchase"` only, so it and the Categories screen answer
+  different questions.
 - **Design fidelity**: the UI was ported from a Claude Design handoff
   (dashboard, import wizard, transactions, categories, cards, templates
   screens) — OKLCH color tokens, Public Sans + IBM Plex Mono fonts, exact

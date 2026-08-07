@@ -62,11 +62,14 @@ export function Cards({ appState, onReload }: { appState: AppState; onReload: ()
     }
   }
 
-  async function commitCardField(id: string, patch: Parameters<typeof updateCard>[1]) {
+  // Uncontrolled inputs: without `revert`, a rejected edit left the typed
+  // value displayed indefinitely even though nothing was saved.
+  async function commitCardField(id: string, patch: Parameters<typeof updateCard>[1], revert: () => void) {
     try {
       await updateCard(id, patch);
       await onReload();
     } catch (err) {
+      revert();
       pushToast(err instanceof Error ? err.message : "Failed to update card");
     }
   }
@@ -91,9 +94,18 @@ export function Cards({ appState, onReload }: { appState: AppState; onReload: ()
           >
             <span style={{ width: 14, height: 14, borderRadius: "50%", background: c.color, flexShrink: 0 }} />
             <input
+              key={c.id + c.name}
               defaultValue={c.name}
               onBlur={(e) => {
-                if (e.target.value.trim() && e.target.value !== c.name) commitCardField(c.id, { name: e.target.value.trim() });
+                const target = e.target;
+                const value = target.value.trim();
+                if (value && value !== c.name) {
+                  commitCardField(c.id, { name: value }, () => {
+                    target.value = c.name;
+                  });
+                } else {
+                  target.value = c.name;
+                }
               }}
               className="inline-editable"
               title="Click to rename"
@@ -108,9 +120,16 @@ export function Cards({ appState, onReload }: { appState: AppState; onReload: ()
               }}
             />
             <input
+              key={c.id + c.bank}
               defaultValue={c.bank}
               onBlur={(e) => {
-                if (e.target.value !== c.bank) commitCardField(c.id, { bank: e.target.value.trim() });
+                const target = e.target;
+                const value = target.value.trim();
+                if (value !== c.bank) {
+                  commitCardField(c.id, { bank: value }, () => {
+                    target.value = c.bank;
+                  });
+                }
               }}
               className="inline-editable"
               title="Click to edit bank name"
@@ -124,7 +143,9 @@ export function Cards({ appState, onReload }: { appState: AppState; onReload: ()
                 borderRadius: 6,
               }}
             />
-            <NetworkToggle value={c.network} onChange={(n) => commitCardField(c.id, { network: n })} />
+            {/* The network toggle is driven by props, so a failed save
+                re-renders back to the stored value on its own. */}
+            <NetworkToggle value={c.network} onChange={(n) => commitCardField(c.id, { network: n }, () => {})} />
             <div style={{ fontFamily: "var(--mono)", fontSize: 13, color: "var(--muted)" }}>····{c.last4}</div>
             <div style={{ fontFamily: "var(--mono)", fontSize: 13, fontWeight: 600, marginLeft: "auto" }}>
               {fmtCurrency(totals.get(c.id) || 0)} spent

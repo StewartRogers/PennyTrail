@@ -3,6 +3,7 @@ import { updateState } from "@/lib/store";
 import { uid } from "@/lib/id";
 import { classifyTransactionType, cleanVendorName, resolveVendor } from "@/lib/classify";
 import { findChildByRawName, findParentByName } from "@/lib/vendors";
+import { readJsonObject, readString } from "@/lib/request";
 import type { ChildVendor, ParentVendor, Transaction } from "@/lib/types";
 
 interface ImportRow {
@@ -15,9 +16,20 @@ interface ImportRow {
   typeText?: string;
 }
 
+const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
+
+function isOptionalString(value: unknown): boolean {
+  return value === undefined || value === null || typeof value === "string";
+}
+
+// One statement import is bounded by what a card issuer will export; anything
+// past this is a malformed or hostile request, and every mutation re-serializes
+// the whole store, so an oversized batch slows every later request forever.
+const MAX_IMPORT_ROWS = 20000;
+
 export async function POST(request: Request) {
-  const body = await request.json().catch(() => ({}));
-  const cardId = String(body.cardId || "");
+  const body = await readJsonObject(request);
+  const cardId = readString(body.cardId);
   const rows: ImportRow[] = Array.isArray(body.rows) ? body.rows : [];
 
   if (!cardId) {
@@ -25,6 +37,9 @@ export async function POST(request: Request) {
   }
   if (rows.length === 0) {
     return NextResponse.json({ error: "No rows to import" }, { status: 400 });
+  }
+  if (rows.length > MAX_IMPORT_ROWS) {
+    return NextResponse.json({ error: `Too many rows in one import (max ${MAX_IMPORT_ROWS})` }, { status: 400 });
   }
 
   const { result } = await updateState((state) => {
@@ -39,14 +54,28 @@ export async function POST(request: Request) {
         typeof row.amount !== "number" ||
         !Number.isFinite(row.amount) ||
         typeof row.date !== "string" ||
-        !row.date ||
-        typeof row.rawDescription !== "string"
+        !ISO_DATE.test(row.date) ||
+        typeof row.rawDescription !== "string" ||
+        typeof row.isCharge !== "boolean" ||
+        !isOptionalString(row.vendorOverride) ||
+        !isOptionalString(row.categoryText) ||
+        !isOptionalString(row.typeText)
       ) {
         // A bad/missing amount, date, or description (e.g. an unparseable
         // or malformed CSV cell) would otherwise be stored as-is and
         // permanently corrupt this transaction (wrong sort order, crashes
         // in code that assumes these are strings) — drop the row instead
         // and surface the count to the caller.
+        //
+        // isCharge must be a real boolean: a missing or string value made
+        // `!isCharge` true, so classifyTransactionType silently returned
+        // "payment" for a purchase and every dashboard total came up short.
+        // The date must be the ISO yyyy-mm-dd that the Transaction contract
+        // and every consumer assume — "03/15/2024" sorts lexicographically
+        // ahead of all ISO dates and renders as "Invalid Date". The optional
+        // text overrides must be strings or absent; a number reaching
+        // row.categoryText.trim() below threw a raw TypeError out of the
+        // mutator, discarding every already-processed row in the batch.
         skipped++;
         continue;
       }

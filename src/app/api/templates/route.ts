@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { updateState } from "@/lib/store";
 import { uid } from "@/lib/id";
+import { MAX_NAME_LENGTH, readJsonObject } from "@/lib/request";
 import type { Template } from "@/lib/types";
 
 const DATE_FORMATS = ["MM/DD/YYYY", "DD/MM/YYYY", "YYYY-MM-DD"];
@@ -10,9 +11,12 @@ function isValidCol(n: unknown): boolean {
 }
 
 export async function POST(request: Request) {
-  const body = await request.json().catch(() => null);
-  if (typeof body?.name !== "string" || !body.name || typeof body?.bank !== "string" || !body.bank) {
+  const body = await readJsonObject(request);
+  if (typeof body.name !== "string" || !body.name || typeof body.bank !== "string" || !body.bank) {
     return NextResponse.json({ error: "Template name and bank are required" }, { status: 400 });
+  }
+  if (body.name.length > MAX_NAME_LENGTH || body.bank.length > MAX_NAME_LENGTH) {
+    return NextResponse.json({ error: "Template name or bank is too long" }, { status: 400 });
   }
   if (!isValidCol(body.dateCol) || !isValidCol(body.descCol)) {
     return NextResponse.json({ error: "A date column and description column are required" }, { status: 400 });
@@ -49,7 +53,14 @@ export async function POST(request: Request) {
       categoryCol: isValidCol(body.categoryCol) ? body.categoryCol : -1,
       typeCol: isValidCol(body.typeCol) ? body.typeCol : -1,
       skipRows: isValidCol(body.skipRows) ? body.skipRows : 0,
-      headerSnapshot: Array.isArray(body.headerSnapshot) ? body.headerSnapshot : [],
+      // Only Array.isArray was checked before, so `[{...}]` or `[null]` was
+      // persisted into a field typed string[]. Templates.tsx renders these
+      // directly, so a non-string element showed up as "[object Object]" and
+      // there is no template PATCH to correct it — the only fix was editing
+      // store.json by hand. Keep the strings, drop everything else.
+      headerSnapshot: Array.isArray(body.headerSnapshot)
+        ? (body.headerSnapshot as unknown[]).filter((h): h is string => typeof h === "string")
+        : [],
     };
     state.templates.push(newTemplate);
     return newTemplate;

@@ -40,6 +40,18 @@ yarn-error.log*
 /data
 /data-test
 
+# bank statement exports. This app's entire workflow is importing statement
+# CSVs, so a real one dropped in the repo to test an import is the most
+# plausible way personal financial data gets staged by accident.
+*.csv
+!tests/**/*.csv
+
+# editor / OS cruft
+.vscode/
+.idea/
+*.swp
+Thumbs.db
+
 # typescript
 *.tsbuildinfo
 next-env.d.ts

@@ -22,6 +22,21 @@ export function netAmountForTransaction(txn: Pick<Transaction, "amount" | "reimb
   return txn.amount - (txn.reimbursedAmount || 0);
 }
 
+// Net spend for a transaction, signed by what the transaction actually does
+// to that category's total. `amount` is always stored positive (the import
+// route does Math.abs), so summing raw net amounts across types added refunds
+// to spend instead of subtracting them: a $100 purchase and its $100 refund —
+// which resolve to the same vendor, and therefore the same category — showed
+// as $200 spent rather than $0.
+//   purchase/fee   a cost against the category
+//   credit/cashback a refund or reward that gives spend back
+//   payment        a card payment, not category spend at all
+export function categorySpendForTransaction(txn: Pick<Transaction, "amount" | "reimbursedAmount" | "type">): number {
+  if (txn.type === "payment") return 0;
+  const net = netAmountForTransaction(txn);
+  return txn.type === "credit" || txn.type === "cashback" ? -net : net;
+}
+
 export function vendorNameForTransaction(txn: Pick<Transaction, "childVendorId">, childById: Map<string, ChildVendor>): string | null {
   if (!txn.childVendorId) return null;
   return childById.get(txn.childVendorId)?.rawName ?? null;

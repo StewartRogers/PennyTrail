@@ -1,5 +1,6 @@
 "use client";
 
+import { useEffect } from "react";
 import type { Card, ChildVendor, Transaction } from "@/lib/types";
 import { fmtCurrency, fmtDateShort } from "@/lib/format";
 import { netAmountForTransaction, vendorNameForTransaction } from "@/lib/vendors";
@@ -28,6 +29,17 @@ export function DrillDownModal({
   const cardById = new Map(cards.map((c) => [c.id, c]));
   const childById = new Map(childVendors.map((c) => [c.id, c]));
 
+  // The modal had no dialog semantics at all: no role, no Escape handler, and
+  // the only way out was clicking the backdrop — unreachable for a
+  // keyboard-only user, and unannounced to a screen reader.
+  useEffect(() => {
+    function onKeyDown(e: KeyboardEvent) {
+      if (e.key === "Escape") onClose();
+    }
+    document.addEventListener("keydown", onKeyDown);
+    return () => document.removeEventListener("keydown", onKeyDown);
+  }, [onClose]);
+
   return (
     <div
       onClick={onClose}
@@ -43,6 +55,9 @@ export function DrillDownModal({
       }}
     >
       <div
+        role="dialog"
+        aria-modal="true"
+        aria-label={drillDown.title}
         onClick={(e) => e.stopPropagation()}
         style={{
           background: "var(--panel)",

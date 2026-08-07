@@ -1,4 +1,4 @@
-import { mkdir, readFile, rename, writeFile } from "fs/promises";
+import { mkdir, open, readFile, rename, unlink } from "fs/promises";
 import path from "path";
 import type { AppState } from "./types";
 import { defaultCategories } from "./categories";
@@ -78,8 +78,26 @@ async function renameWithRetry(src: string, dest: string): Promise<void> {
 async function writeStateUnqueued(state: AppState): Promise<void> {
   await mkdir(DATA_DIR, { recursive: true });
   const tmpFile = `${DATA_FILE}.tmp-${process.pid}-${Date.now()}`;
-  await writeFile(tmpFile, JSON.stringify(state, null, 2), "utf-8");
-  await renameWithRetry(tmpFile, DATA_FILE);
+  // fsync the temp file before renaming it into place. Without this the
+  // rename can reach disk while the file's contents haven't, so a power loss
+  // or kernel panic in that window leaves store.json empty or truncated —
+  // which readStateUnqueued can only report as "not valid JSON", with the
+  // user's whole transaction history gone. The rename itself stays atomic for
+  // concurrent readers either way.
+  const handle = await open(tmpFile, "w");
+  try {
+    await handle.writeFile(JSON.stringify(state, null, 2), "utf-8");
+    await handle.sync();
+  } finally {
+    await handle.close();
+  }
+  try {
+    await renameWithRetry(tmpFile, DATA_FILE);
+  } catch (err) {
+    // Don't leave the scratch file behind if the rename ultimately failed.
+    await unlink(tmpFile).catch(() => {});
+    throw err;
+  }
 }
 
 export function readState(): Promise<AppState> {
@@ -90,11 +108,23 @@ export function writeState(state: AppState): Promise<void> {
   return enqueue(() => writeStateUnqueued(state));
 }
 
+// Every route signals rejection by returning a discriminated `{ error }`
+// object from its mutator and mapping that to a status code. A mutator that
+// bails out partway can already have mutated `state` before it hit the
+// failing check, so writing unconditionally would persist the changes made by
+// a request the caller was told had failed (e.g. PATCH /api/transactions/[id]
+// sets txn.type before it validates parentId, so a 400 response still left
+// the type change on disk). Treat an `error` key as "abort": drop the mutated
+// state without writing, and let the next read re-parse from disk.
+function isAbort(result: unknown): boolean {
+  return typeof result === "object" && result !== null && "error" in result;
+}
+
 export function updateState<T>(mutator: (state: AppState) => T): Promise<{ state: AppState; result: T }> {
   return enqueue(async () => {
     const state = await readStateUnqueued();
     const result = mutator(state);
-    await writeStateUnqueued(state);
+    if (!isAbort(result)) await writeStateUnqueued(state);
     return { state, result };
   });
 }

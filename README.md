@@ -58,10 +58,23 @@ All app data (cards, categories, import templates, vendor rules,
 transactions) is stored in `data/store.json`, created on first run. That
 directory is gitignored — it's your personal financial data, not sample
 content, and should never be committed. Reads/writes are serialized through
-a single queue with atomic temp-file+rename writes so concurrent requests
-can't corrupt the file. A CSV row with a missing or non-numeric amount is
-skipped during import (rather than stored as corrupted data) and counted
-in the post-import summary.
+a single queue with atomic temp-file+rename writes (the temp file is fsynced
+before the rename, so a crash mid-write can't leave a truncated store) so
+concurrent requests can't corrupt the file. A CSV row with a missing or
+non-numeric amount, a non-ISO date, or a non-boolean charge flag is skipped
+during import (rather than stored as corrupted data) and counted in the
+post-import summary; the import wizard also reports rows it couldn't read
+before you commit the import.
+
+Two invariants worth knowing if you touch the store or the routes:
+
+- **A rejected request writes nothing.** `updateState` skips the write
+  entirely when the mutator returns an `{ error }` object, so a mutator that
+  bails out partway can't leave half-applied changes on disk. Routes signal
+  failure by returning `{ error: ... }` rather than throwing.
+- **Deleting every transaction requires `{ all: true }`.** `DELETE
+  /api/transactions` rejects a missing, unparseable, or unrecognized body
+  with a 400 instead of treating it as "delete everything".
 
 ## Features / screens
 
@@ -107,6 +120,25 @@ in the post-import summary.
   `9.3.3`, a multi-major-version regression, not an actual fix. If you hit
   new audit findings, check what the suggested fix actually changes before
   applying it.
+- `npm install` prints an `EBADENGINE` warning for
+  `@testing-library/jest-dom@7`, which asks for Node >= 22. The suite passes
+  on Node 20 regardless, so this is a warning rather than a break — resolve it
+  by moving to Node 22+ or pinning `jest-dom` to its v6 line if you want it
+  silenced.
+- **If `npm test` dies with `Bus error` (exit 135)**, a native `.node` binary
+  in `node_modules` has been extracted truncated — usually a corrupt npm cache
+  entry, and it takes Vitest down via Vite's `lightningcss` dependency. It is
+  not a code failure and not a network failure. Fix it with:
+
+  ```bash
+  npm cache verify        # garbage-collects the corrupt entries
+  rm -rf node_modules/lightningcss-linux-*    # or whichever package crashes
+  npm install
+  ```
+
+  To confirm which binary is at fault, `node -e "require('lightningcss')"` —
+  a truncated one SIGBUSes on load, and its file size will be far smaller
+  than the same version freshly installed elsewhere.
 
 ## Learn more
 

@@ -19,7 +19,13 @@ export function parseCSV(text: string): string[][] {
         field += c;
       }
     } else {
-      if (c === '"') inQuotes = true;
+      // A quote only opens a quoted field at the *start* of a field. Treating
+      // any bare `"` as an opening quote meant one stray inch-mark in a
+      // description ("BEST BUY 21\" TV") swallowed every remaining row of the
+      // file into a single field, and the wizard imported the survivors with
+      // no error. Mid-field quotes are literal characters, as in every real
+      // CSV reader.
+      if (c === '"' && field === "") inQuotes = true;
       else if (c === ",") {
         row.push(field);
         field = "";
@@ -62,31 +68,83 @@ export function guessMapping(headers: string[]): GuessedMapping {
     }
     return -1;
   };
-  return {
-    dateCol: find("date", "transaction date", "post date", "posted date"),
+  // Needles run most-specific-first. With "date" listed first, the substring
+  // pass matched it inside "Post Date" before "transaction date" was ever
+  // tried, so on a `Post Date, Transaction Date, ...` export the posting date
+  // won purely by column order and the later needles were dead code.
+  const mapping = {
+    dateCol: find("transaction date", "posted date", "post date", "date"),
     descCol: find("description", "merchant", "payee", "details", "name"),
     amountCol: find("amount", "amt"),
     debitCol: find("debit"),
     creditCol: find("credit"),
     categoryCol: find("category"),
-    typeCol: find("type", "transaction type"),
+    typeCol: find("transaction type", "type"),
   };
+  // A single combined column ("Debit/Credit") substring-matches both needles.
+  // Mapping it to both meant split mode read the same indicator cell twice —
+  // parseAmount("DR") is NaN both times, so every row was silently dropped.
+  // It's a direction flag, not an amount column; leave both unmapped.
+  if (mapping.debitCol > -1 && mapping.debitCol === mapping.creditCol) {
+    mapping.debitCol = -1;
+    mapping.creditCol = -1;
+  }
+  return mapping;
+}
+
+// Works out which of "." and "," is the decimal point before any separator is
+// stripped. Blanket-stripping both (the previous behaviour) silently produced
+// wrong money: "12,34" read as 1234 (100x too large), "1.234,56" as 1.23456
+// (1000x too small), and the corrupt cell "1.234.56" as a plausible 1.234
+// rather than NaN, so it was imported instead of skipped.
+function stripGroupingSeparators(s: string): string | null {
+  const hasDot = s.includes(".");
+  const hasComma = s.includes(",");
+
+  if (hasDot && hasComma) {
+    // Whichever separator comes last is the decimal point; the other groups
+    // thousands. Covers both "1,234.56" and "1.234,56".
+    const decimal = s.lastIndexOf(".") > s.lastIndexOf(",") ? "." : ",";
+    const grouping = decimal === "." ? "," : ".";
+    return s.split(grouping).join("").replace(decimal, ".");
+  }
+
+  const sep = hasDot ? "." : hasComma ? "," : null;
+  if (!sep) return s;
+
+  const parts = s.split(sep);
+  if (parts.length === 2) {
+    // A single separator with a 3-digit tail is genuinely ambiguous
+    // ("1,234" is 1234 in en-US, 1.234 in de-DE). This app formats as en-US
+    // throughout, so read it as a thousands group.
+    if (/^\d{1,3}$/.test(parts[0]) && /^\d{3}$/.test(parts[1])) return parts[0] + parts[1];
+    return parts[0] + "." + parts[1];
+  }
+  // Several separators can only be thousands grouping, and only if every
+  // group is well-formed — otherwise it's a corrupt cell and must not parse.
+  if (parts.every((p, i) => (i === 0 ? /^\d{1,3}$/ : /^\d{3}$/).test(p))) return parts.join("");
+  return null;
 }
 
 export function parseAmount(str: unknown): number {
   if (str == null) return NaN;
   let s = String(str).trim();
   if (s === "") return NaN;
-  let negative = false;
-  if (/^\(.*\)$/.test(s)) {
-    negative = true;
-    s = s.slice(1, -1);
-  }
   s = s.replace(/[‐-―−]/g, "-"); // normalize unicode hyphen/dash/minus variants to ascii hyphen
-  s = s.replace(/[^0-9.\-]/g, "");
+  let negative = false;
+  // Accounting negatives. The parens were previously only recognized when "("
+  // was the very first character, so "$(1,234.56)" — the same value with the
+  // symbol outside — imported as a positive charge instead of a credit.
+  if (/\(.*\)/.test(s)) {
+    negative = true;
+    s = s.replace(/[()]/g, "");
+  }
   if (s.includes("-")) negative = true;
-  s = s.replace(/-/g, "");
-  const n = parseFloat(s);
+  s = s.replace(/[^0-9.,]/g, "");
+  if (s === "") return NaN;
+  const normalized = stripGroupingSeparators(s);
+  if (normalized === null) return NaN;
+  const n = parseFloat(normalized);
   if (isNaN(n)) return NaN;
   return negative ? -n : n;
 }
@@ -114,6 +172,16 @@ export function parseDateFlexible(str: unknown, format: string): string | null {
   }
   if (y < 100) y += 2000;
   if (!y || !m || !d || m < 1 || m > 12 || d < 1 || d > 31) return null;
+  // `d <= 31` alone let impossible dates through: "02/30/2026" became the ISO
+  // string "2026-02-30", which passes the import route's format check and is
+  // stored — then fmtDateShort's `new Date(2026, 1, 30)` rolls it over and the
+  // row displays as "Mar 2, 2026" while monthKey still buckets it under
+  // February, so the table and the charts disagree. Reject anything the
+  // calendar doesn't actually have.
+  const probe = new Date(Date.UTC(y, m - 1, d));
+  if (probe.getUTCFullYear() !== y || probe.getUTCMonth() !== m - 1 || probe.getUTCDate() !== d) {
+    return null;
+  }
   const iso =
     y.toString().padStart(4, "0") + "-" + String(m).padStart(2, "0") + "-" + String(d).padStart(2, "0");
   return iso;

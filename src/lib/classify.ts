@@ -15,7 +15,12 @@ export function cleanVendorName(raw: string | null | undefined): string {
   // almost never a per-transaction reference code (those aren't
   // parenthesized in real bank exports), so they're excluded from the
   // digit-run strip below rather than being mistaken for noise.
-  s = s.replace(/(?<!\()\d{3,}(?!\))/g, "");
+  // The digit-run boundaries (?<!\d) and (?!\d) are load-bearing: without
+  // them \d{3,} could backtrack to a *substring* of a parenthesized number
+  // that no longer sits against the parens, so "ACME (20015) LTD" matched
+  // "0015" and became "Acme (2) Ltd". Anchoring to whole runs makes the
+  // paren guards actually hold.
+  s = s.replace(/(?<!\d)(?<!\()\d{3,}(?!\d)(?!\))/g, "");
   // Stripping digits in place can leave a hyphen with nothing useful still
   // attached to it — a phone number like "877-946-3184" becomes "--" once
   // its digit groups are gone. Collapse any hyphen run that isn't actually
@@ -108,13 +113,25 @@ export function resolveVendor(cleanedName: string, childVendors: ChildVendor[], 
   // every child it already has — accumulating children's tokens would mean
   // a parent with both a "Toronto" and an "Oakville" child could no longer
   // match a third city, since neither city name contains the other.
+  // Take the *closest* containment match, not the first one found. Returning
+  // on first match made the result depend on vendor creation order: with
+  // parents "Shell" and "Shell Gas Station", the name "Shell Gas Station
+  // Toronto" is contained-compatible with both, and whichever happened to sit
+  // earlier in the array won — so the same import could land under a
+  // different parent, and therefore a different category, purely by history.
+  // Closeness is the gap in token count: the parent whose name is nearest in
+  // specificity to the candidate is the better identity.
+  let best: { parentId: string; distance: number } | null = null;
   for (const parent of parentVendors) {
     const known = new Set(coreTokens(parent.name));
     if (known.size === 0) continue;
     const [smaller, larger] = newCore.size <= known.size ? [newCore, known] : [known, newCore];
     const contained = [...smaller].every((t) => larger.has(t));
-    if (contained) return { kind: "fuzzy", parentId: parent.id };
+    if (!contained) continue;
+    const distance = Math.abs(known.size - newCore.size);
+    if (!best || distance < best.distance) best = { parentId: parent.id, distance };
   }
+  if (best) return { kind: "fuzzy", parentId: best.parentId };
 
   return { kind: "none" };
 }
@@ -140,7 +157,12 @@ export function classifyTransactionType(
   if (!isCharge && /PAYMENT|PYMT|\bPMT\b|AUTO ?PAY|THANK YOU/.test(combined) && !/INTEREST/.test(combined)) {
     return "payment";
   }
-  if (/CASH ?BACK|REWARDS? REDEEM|POINTS REDEEM/.test(combined)) return "cashback";
+  // Needs the !isCharge guard its sibling rules have: a cashback *reward* is
+  // always a credit. Without it, a charge like "SAFEWAY #123 CASH BACK 40.00"
+  // (cash taken out at the till) was typed as a reward, and since the
+  // dashboard sums only type === "purchase" it dropped out of Total Spend
+  // entirely instead of counting as the purchase it is.
+  if (!isCharge && /CASH ?BACK|REWARDS? REDEEM|POINTS REDEEM/.test(combined)) return "cashback";
   // The refund exclusion matters here: a credit-side "Annual Fee Reversal"
   // or "Annual Fee Refund" line is a credit, not a fee.
   if (
