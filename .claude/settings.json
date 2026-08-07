@@ -4,7 +4,11 @@
       "Bash(npm test)",
       "Bash(npm run lint)",
       "Bash(npm run build)",
-      "Bash(git fetch *)",
+      "Bash(git fetch)",
+      "Bash(git fetch origin)",
+      "Bash(git fetch --all)",
+      "Bash(git fetch --prune)",
+      "Bash(git fetch origin --prune)",
       "mcp__plugin_vercel_vercel__web_fetch_vercel_url",
       "mcp__plugin_vercel_vercel__list_deployments"
     ]
