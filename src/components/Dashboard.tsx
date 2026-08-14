@@ -4,6 +4,7 @@ import { useMemo, useState } from "react";
 import type { AppState, Transaction } from "@/lib/types";
 import { fmtCurrency, fmtCurrencyWhole, monthKey, monthLabel, quarterKey, toISODate, yearKey } from "@/lib/format";
 import { categoryIdForTransaction, netAmountForTransaction, parentIdForTransaction } from "@/lib/vendors";
+import { trailingPeriodKeys } from "@/lib/aggregate";
 import { Card as PanelCard, SectionTitle, ColorDot, SegmentedControl, inputStyle } from "./ui";
 import type { DrillDown } from "./DrillDownModal";
 
@@ -55,34 +56,6 @@ const TREND_COLORS = [
   "oklch(0.70 0.13 10)", // Warm Rose / Pink
   "oklch(0.45 0.02 260)", // Slate Grey / Charcoal
 ];
-
-// Trailing N *complete* periods ending at the last fully-elapsed one — the
-// current, still-in-progress month/quarter/year is deliberately excluded so
-// it can't show up as a misleadingly short bar. Missing periods (no
-// transactions at all) are zero-filled rather than silently skipped, so the
-// chart is always a stable calendar window, not a function of which months
-// happen to have data.
-function trailingPeriodKeys(group: TrendGroup, count: number): string[] {
-  const now = new Date();
-  const keys: string[] = [];
-  if (group === "month") {
-    for (let i = count; i >= 1; i--) {
-      const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
-      keys.push(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`);
-    }
-  } else if (group === "quarter") {
-    const currentQuarterStartMonth = Math.floor(now.getMonth() / 3) * 3;
-    for (let i = count; i >= 1; i--) {
-      const d = new Date(now.getFullYear(), currentQuarterStartMonth - i * 3, 1);
-      keys.push(`${d.getFullYear()}-Q${Math.floor(d.getMonth() / 3) + 1}`);
-    }
-  } else {
-    for (let i = count; i >= 1; i--) {
-      keys.push(String(now.getFullYear() - i));
-    }
-  }
-  return keys;
-}
 
 export function Dashboard({
   appState,

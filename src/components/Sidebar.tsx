@@ -5,6 +5,7 @@ import type { Screen } from "./App";
 
 const NAV_ITEMS: { screen: Screen; label: string }[] = [
   { screen: "dashboard", label: "Dashboard" },
+  { screen: "averages", label: "Averages" },
   { screen: "import", label: "Import CSV" },
   { screen: "transactions", label: "Transactions" },
   { screen: "categories", label: "Categories" },

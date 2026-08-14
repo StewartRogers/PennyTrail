@@ -7,6 +7,7 @@ import { Sidebar } from "./Sidebar";
 import { DrillDownModal, type DrillDown } from "./DrillDownModal";
 import { ToastProvider } from "./ToastContext";
 import { Dashboard } from "./Dashboard";
+import { Averages } from "./Averages";
 import { ImportWizard } from "./ImportWizard";
 import { Transactions, type TxnFilterSeed } from "./Transactions";
 import { Categories } from "./Categories";
@@ -14,7 +15,7 @@ import { Cards } from "./Cards";
 import { Templates } from "./Templates";
 import { VendorMappings } from "./VendorMappings";
 
-export type Screen = "dashboard" | "import" | "transactions" | "categories" | "vendors" | "cards" | "templates";
+export type Screen = "dashboard" | "averages" | "import" | "transactions" | "categories" | "vendors" | "cards" | "templates";
 
 function AppInner() {
   const [screen, setScreen] = useState<Screen>("dashboard");
@@ -146,6 +147,7 @@ function AppInner() {
           </div>
         )}
         {screen === "dashboard" && <Dashboard appState={appState} onDrillDown={setDrillDown} />}
+        {screen === "averages" && <Averages appState={appState} onDrillDown={setDrillDown} />}
         {screen === "import" && <ImportWizard appState={appState} onReload={reload} onGoDashboard={() => setScreen("dashboard")} />}
         {screen === "transactions" && (
           <Transactions appState={appState} onReload={reload} seed={txnSeed.filter} seedKey={txnSeed.n} />
