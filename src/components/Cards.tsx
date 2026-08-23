@@ -77,6 +77,22 @@ export function Cards({ appState, onReload }: { appState: AppState; onReload: ()
   return (
     <div>
       <PageTitle>Cards</PageTitle>
+
+      <div style={{ border: "1px dashed var(--border)", borderRadius: 10, padding: "14px 16px", maxWidth: 480, marginBottom: 22 }}>
+        <div style={{ fontSize: 12.5, fontWeight: 600, color: "var(--muted)", marginBottom: 10 }}>+ Add a card</div>
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 8 }}>
+          <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Card nickname" style={{ ...inputStyle, flex: 1, minWidth: 140 }} />
+          <input value={bank} onChange={(e) => setBank(e.target.value)} placeholder="Bank" style={{ ...inputStyle, flex: 1, minWidth: 120 }} />
+          <input value={last4} onChange={(e) => setLast4(e.target.value)} placeholder="Last 4" style={{ ...inputStyle, width: 70 }} />
+        </div>
+        <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+          <NetworkToggle value={network} onChange={setNetwork} />
+          <div style={{ marginLeft: "auto" }}>
+            <PrimaryButton onClick={handleAdd}>Add Card</PrimaryButton>
+          </div>
+        </div>
+      </div>
+
       <div style={{ display: "flex", flexDirection: "column", gap: 8, maxWidth: 680, marginBottom: 22 }}>
         {appState.cards.map((c) => (
           <div
@@ -94,7 +110,7 @@ export function Cards({ appState, onReload }: { appState: AppState; onReload: ()
           >
             <span style={{ width: 14, height: 14, borderRadius: "50%", background: c.color, flexShrink: 0 }} />
             <input
-              key={c.id + c.name}
+              key={"name:" + c.id + c.name}
               defaultValue={c.name}
               onBlur={(e) => {
                 const target = e.target;
@@ -120,7 +136,7 @@ export function Cards({ appState, onReload }: { appState: AppState; onReload: ()
               }}
             />
             <input
-              key={c.id + c.bank}
+              key={"bank:" + c.id + c.bank}
               defaultValue={c.bank}
               onBlur={(e) => {
                 const target = e.target;
@@ -152,22 +168,7 @@ export function Cards({ appState, onReload }: { appState: AppState; onReload: ()
             </div>
           </div>
         ))}
-        {appState.cards.length === 0 && <div style={{ color: "var(--muted)", fontSize: 13.5 }}>No cards yet — add one below.</div>}
-      </div>
-
-      <div style={{ border: "1px dashed var(--border)", borderRadius: 10, padding: "14px 16px", maxWidth: 480 }}>
-        <div style={{ fontSize: 12.5, fontWeight: 600, color: "var(--muted)", marginBottom: 10 }}>+ Add a card</div>
-        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 8 }}>
-          <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Card nickname" style={{ ...inputStyle, flex: 1, minWidth: 140 }} />
-          <input value={bank} onChange={(e) => setBank(e.target.value)} placeholder="Bank" style={{ ...inputStyle, flex: 1, minWidth: 120 }} />
-          <input value={last4} onChange={(e) => setLast4(e.target.value)} placeholder="Last 4" style={{ ...inputStyle, width: 70 }} />
-        </div>
-        <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-          <NetworkToggle value={network} onChange={setNetwork} />
-          <div style={{ marginLeft: "auto" }}>
-            <PrimaryButton onClick={handleAdd}>Add Card</PrimaryButton>
-          </div>
-        </div>
+        {appState.cards.length === 0 && <div style={{ color: "var(--muted)", fontSize: 13.5 }}>No cards yet — add one above.</div>}
       </div>
     </div>
   );

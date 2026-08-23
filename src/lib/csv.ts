@@ -149,11 +149,46 @@ export function parseAmount(str: unknown): number {
   return negative ? -n : n;
 }
 
+const MONTH_NAMES: Record<string, number> = {
+  jan: 1,
+  january: 1,
+  feb: 2,
+  february: 2,
+  mar: 3,
+  march: 3,
+  apr: 4,
+  april: 4,
+  may: 5,
+  jun: 6,
+  june: 6,
+  jul: 7,
+  july: 7,
+  aug: 8,
+  august: 8,
+  sep: 9,
+  sept: 9,
+  september: 9,
+  oct: 10,
+  october: 10,
+  nov: 11,
+  november: 11,
+  dec: 12,
+  december: 12,
+};
+
 export function parseDateFlexible(str: unknown, format: string): string | null {
   if (!str) return null;
   const s = String(str).trim();
   let y: number, m: number, d: number;
-  if (format === "YYYY-MM-DD") {
+  if (format === "Month DD, YYYY") {
+    // Accepts both full ("May 21, 2026") and abbreviated ("Jan 5, 2026")
+    // month names, with or without the comma.
+    const match = /^([A-Za-z]+)\.?\s+(\d{1,2}),?\s+(\d{2,4})$/.exec(s);
+    if (!match) return null;
+    m = MONTH_NAMES[match[1].toLowerCase()] ?? NaN;
+    d = +match[2];
+    y = +match[3];
+  } else if (format === "YYYY-MM-DD") {
     const p = s.split(/[-/]/);
     y = +p[0];
     m = +p[1];

@@ -63,8 +63,11 @@ export interface MonthlyAverages {
 // "months that had spend"), matching the Dashboard's avg/month convention —
 // a vendor charged twice in a 6-month window averages to total/6, not
 // total/2. Categories flagged excludeFromDashboard are dropped, same as
-// every other Dashboard-style aggregate. Only categories, parents, and
-// vendors with nonzero spend in the window are returned.
+// every other Dashboard-style aggregate — as is any individual transaction
+// flagged the same way (e.g. a one-off outlier that shouldn't skew this
+// vendor's average without hiding every other charge from it). Only
+// categories, parents, and vendors with nonzero spend in the window are
+// returned.
 export function computeMonthlyAverages(
   transactions: Transaction[],
   categories: Category[],
@@ -84,7 +87,7 @@ export function computeMonthlyAverages(
   // total is exactly the sum of the level below it.
   const childMonthly = new Map<string, Map<string, number>>();
   for (const t of transactions) {
-    if (t.type !== "purchase" || !t.childVendorId) continue;
+    if (t.type !== "purchase" || !t.childVendorId || t.excludeFromDashboard) continue;
     const key = monthKey(t.date);
     if (!monthSet.has(key)) continue;
     const child = childById.get(t.childVendorId);

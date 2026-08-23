@@ -3,12 +3,12 @@
 import { useMemo, useState } from "react";
 import type { AppState, Transaction, TxnType } from "@/lib/types";
 import { deleteAllTransactions, deleteTransactions, updateTransaction } from "@/lib/api";
-import { cleanVendorName } from "@/lib/classify";
 import { fmtCurrency, fmtDateShort } from "@/lib/format";
 import { TYPE_META, sortCategoriesByName } from "@/lib/categories";
 import { categoryIdForTransaction, netAmountForTransaction, parentIdForTransaction, vendorNameForTransaction } from "@/lib/vendors";
 import { PageTitle, ColorDot, inputStyle, SecondaryButton } from "./ui";
 import { useToast } from "./ToastContext";
+import { TransactionEditModal, type TransactionEditPatch } from "./TransactionEditModal";
 
 export interface TxnFilterSeed {
   search?: string;
@@ -16,6 +16,11 @@ export interface TxnFilterSeed {
   cardFilter?: string;
   typeFilter?: TxnType | "all";
   vendorFilter?: string; // a ParentVendor id
+  childVendorFilter?: string; // a ChildVendor id — narrower than vendorFilter, for a single raw vendor name
+  dateFrom?: string; // ISO yyyy-mm-dd, inclusive
+  dateTo?: string; // ISO yyyy-mm-dd, inclusive
+  amountMin?: string; // gross amount (Transaction.amount, before reimbursement), inclusive
+  amountMax?: string; // gross amount (Transaction.amount, before reimbursement), inclusive
 }
 
 const PAGE_SIZE = 40;
@@ -32,20 +37,37 @@ export function Transactions({
   seedKey: number;
 }) {
   const pushToast = useToast();
-  const [search, setSearch] = useState("");
-  const [cardFilter, setCardFilter] = useState("all");
-  const [categoryFilter, setCategoryFilter] = useState("all");
-  const [typeFilter, setTypeFilter] = useState<TxnType | "all">("all");
-  const [vendorFilter, setVendorFilter] = useState<string | null>(null);
+  // Seeded from `seed` directly (not a plain "" / "all" / null default): the
+  // Transactions screen is conditionally rendered in App.tsx, so navigating
+  // here from a Dashboard/Averages/VendorMappings drill-down always mounts a
+  // fresh instance — the seedKey-change effect below never fires on that
+  // first render, since `appliedSeedKey` starts out equal to the very
+  // seedKey it would be comparing against.
+  const [search, setSearch] = useState(seed.search ?? "");
+  const [cardFilter, setCardFilter] = useState(seed.cardFilter ?? "all");
+  const [categoryFilter, setCategoryFilter] = useState(seed.categoryFilter ?? "all");
+  const [typeFilter, setTypeFilter] = useState<TxnType | "all">(seed.typeFilter ?? "all");
+  const [vendorFilter, setVendorFilter] = useState<string | null>(seed.vendorFilter ?? null);
+  const [childVendorFilter, setChildVendorFilter] = useState<string | null>(seed.childVendorFilter ?? null);
+  const [dateFrom, setDateFrom] = useState(seed.dateFrom ?? "");
+  const [dateTo, setDateTo] = useState(seed.dateTo ?? "");
+  const [amountMin, setAmountMin] = useState(seed.amountMin ?? "");
+  const [amountMax, setAmountMax] = useState(seed.amountMax ?? "");
   const [visibleCount, setVisibleCount] = useState(PAGE_SIZE);
   const [confirmingDeleteAll, setConfirmingDeleteAll] = useState(false);
   const [deletingAll, setDeletingAll] = useState(false);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [confirmingDeleteSelected, setConfirmingDeleteSelected] = useState(false);
   const [deletingSelected, setDeletingSelected] = useState(false);
+  const [confirmingDeleteFiltered, setConfirmingDeleteFiltered] = useState(false);
+  const [deletingFiltered, setDeletingFiltered] = useState(false);
+  const [editingTxn, setEditingTxn] = useState<Transaction | null>(null);
 
-  // Apply an incoming filter seed (e.g. from a dashboard drill-down "View all")
-  // during render rather than in an effect, since it's adjusting state in
+  // Re-applies a new seed if this instance ever receives one without
+  // unmounting first (it doesn't today — every current caller navigates in
+  // from a different screen, which remounts fresh and picks up the seed via
+  // the useState initializers above instead). Kept as a safety net, done
+  // during render rather than in an effect since it's adjusting state in
   // response to a prop change rather than syncing with an external system.
   const [appliedSeedKey, setAppliedSeedKey] = useState(seedKey);
   if (seedKey !== appliedSeedKey) {
@@ -55,12 +77,19 @@ export function Transactions({
     setCategoryFilter(seed.categoryFilter ?? "all");
     setTypeFilter(seed.typeFilter ?? "all");
     setVendorFilter(seed.vendorFilter ?? null);
+    setChildVendorFilter(seed.childVendorFilter ?? null);
+    setDateFrom(seed.dateFrom ?? "");
+    setDateTo(seed.dateTo ?? "");
+    setAmountMin(seed.amountMin ?? "");
+    setAmountMax(seed.amountMax ?? "");
     setVisibleCount(PAGE_SIZE);
     setSelectedIds(new Set());
     setConfirmingDeleteSelected(false);
+    setConfirmingDeleteFiltered(false);
   }
 
   const cardById = useMemo(() => new Map(appState.cards.map((c) => [c.id, c])), [appState.cards]);
+  const sortedCards = useMemo(() => [...appState.cards].sort((a, b) => a.name.localeCompare(b.name)), [appState.cards]);
   const categoryById = useMemo(() => new Map(appState.categories.map((c) => [c.id, c])), [appState.categories]);
   const sortedCategories = useMemo(() => sortCategoriesByName(appState.categories), [appState.categories]);
   const childById = useMemo(() => new Map(appState.childVendors.map((c) => [c.id, c])), [appState.childVendors]);
@@ -68,6 +97,10 @@ export function Transactions({
   const sortedParents = useMemo(
     () => [...appState.parentVendors].sort((a, b) => a.name.localeCompare(b.name)),
     [appState.parentVendors]
+  );
+  const sortedChildren = useMemo(
+    () => [...appState.childVendors].sort((a, b) => a.rawName.localeCompare(b.rawName)),
+    [appState.childVendors]
   );
 
   const filtered = useMemo(() => {
@@ -81,65 +114,82 @@ export function Transactions({
         return false;
       if (typeFilter !== "all" && t.type !== typeFilter) return false;
       if (vendorFilter && parentIdForTransaction(t, childById) !== vendorFilter) return false;
+      if (childVendorFilter && t.childVendorId !== childVendorFilter) return false;
+      if (dateFrom && t.date < dateFrom) return false;
+      if (dateTo && t.date > dateTo) return false;
+      if (amountMin && t.amount < Number(amountMin)) return false;
+      if (amountMax && t.amount > Number(amountMax)) return false;
       return true;
     });
-  }, [appState.transactions, search, cardFilter, categoryFilter, typeFilter, vendorFilter, childById, parentById]);
+  }, [
+    appState.transactions,
+    search,
+    cardFilter,
+    categoryFilter,
+    typeFilter,
+    vendorFilter,
+    childVendorFilter,
+    dateFrom,
+    dateTo,
+    amountMin,
+    amountMax,
+    childById,
+    parentById,
+  ]);
 
   const visible = filtered.slice(0, visibleCount);
+
+  // "Delete filtered" is only offered once a filter actually narrows the
+  // list — with no filter active, filtered === every transaction, which is
+  // exactly what "Delete all transactions…" below already does.
+  const isFiltered =
+    search.trim() !== "" ||
+    cardFilter !== "all" ||
+    categoryFilter !== "all" ||
+    typeFilter !== "all" ||
+    !!vendorFilter ||
+    !!childVendorFilter ||
+    !!dateFrom ||
+    !!dateTo ||
+    !!amountMin ||
+    !!amountMax;
 
   // Changing a filter can take previously-selected rows out of view — clear
   // the selection along with resetting pagination so "N selected" can never
   // silently refer to rows the user can no longer see and didn't intend to
   // act on (e.g. selecting rows under one card filter, switching to another
-  // card, and deleting what looks like a fresh selection).
+  // card, and deleting what looks like a fresh selection). A pending
+  // "delete filtered" confirmation is also for a set that just changed
+  // under it, so it's cleared the same way.
   function resetForFilterChange() {
     setVisibleCount(PAGE_SIZE);
     setSelectedIds(new Set());
     setConfirmingDeleteSelected(false);
+    setConfirmingDeleteFiltered(false);
   }
 
-  async function commitVendorReassign(t: Transaction, parentId: string) {
-    if (parentId === parentIdForTransaction(t, childById)) return;
-    try {
-      await updateTransaction(t.id, { parentId });
-      await onReload();
-    } catch (err) {
-      pushToast(err instanceof Error ? err.message : "Failed to reassign vendor");
-    }
+  function resetAllFilters() {
+    setSearch("");
+    setCardFilter("all");
+    setCategoryFilter("all");
+    setTypeFilter("all");
+    setVendorFilter(null);
+    setChildVendorFilter(null);
+    setDateFrom("");
+    setDateTo("");
+    setAmountMin("");
+    setAmountMax("");
+    resetForFilterChange();
   }
 
-  async function commitNewVendor(t: Transaction, name: string, category: string): Promise<boolean> {
+  async function handleSaveEdit(t: Transaction, patch: TransactionEditPatch): Promise<string | null> {
     try {
-      await updateTransaction(t.id, { newParentName: name, category });
+      await updateTransaction(t.id, patch);
       await onReload();
-      pushToast(`Created vendor "${name}"`);
-      return true;
+      pushToast("Transaction updated");
+      return null;
     } catch (err) {
-      pushToast(err instanceof Error ? err.message : "Failed to create vendor");
-      return false;
-    }
-  }
-
-  async function commitType(t: Transaction, type: TxnType) {
-    if (type === t.type) return;
-    try {
-      await updateTransaction(t.id, { type });
-      await onReload();
-    } catch (err) {
-      pushToast(err instanceof Error ? err.message : "Failed to update transaction type");
-    }
-  }
-
-  async function commitReimbursedAmount(t: Transaction, raw: string) {
-    const trimmed = raw.trim();
-    const next = trimmed === "" ? null : Math.max(0, Math.min(t.amount, Number(trimmed)));
-    if (trimmed !== "" && Number.isNaN(next)) return;
-    if ((next ?? undefined) === (t.reimbursedAmount ?? undefined)) return;
-    try {
-      await updateTransaction(t.id, { reimbursedAmount: next });
-      await onReload();
-    } catch (err) {
-      pushToast(err instanceof Error ? err.message : "Failed to update reimbursed amount");
+      return err instanceof Error ? err.message : "Failed to update transaction";
     }
   }
 
@@ -193,6 +243,24 @@ export function Transactions({
     }
   }
 
+  // Deletes every transaction matching the current filters, not just the
+  // ones paginated into `visible` — so this reaches rows beyond "Load more"
+  // without the user having to click through every page to select them.
+  async function handleDeleteFiltered() {
+    setDeletingFiltered(true);
+    try {
+      const { deletedCount } = await deleteTransactions(filtered.map((t) => t.id));
+      await onReload();
+      setSelectedIds(new Set());
+      setConfirmingDeleteFiltered(false);
+      pushToast(`Deleted ${deletedCount} transaction${deletedCount === 1 ? "" : "s"}`);
+    } catch (err) {
+      pushToast(err instanceof Error ? err.message : "Failed to delete filtered transactions");
+    } finally {
+      setDeletingFiltered(false);
+    }
+  }
+
   return (
     <div>
       <PageTitle>Transactions</PageTitle>
@@ -206,6 +274,58 @@ export function Transactions({
           placeholder="Search vendor or description…"
           style={{ ...inputStyle, flex: 1, minWidth: 200, padding: "9px 12px", fontSize: 13.5 }}
         />
+        <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12.5, color: "var(--muted)" }}>
+          From
+          <input
+            type="date"
+            value={dateFrom}
+            onChange={(e) => {
+              setDateFrom(e.target.value);
+              resetForFilterChange();
+            }}
+            style={inputStyle}
+          />
+        </label>
+        <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12.5, color: "var(--muted)" }}>
+          To
+          <input
+            type="date"
+            value={dateTo}
+            onChange={(e) => {
+              setDateTo(e.target.value);
+              resetForFilterChange();
+            }}
+            style={inputStyle}
+          />
+        </label>
+        <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12.5, color: "var(--muted)" }}>
+          Min $
+          <input
+            type="number"
+            step="0.01"
+            min="0"
+            value={amountMin}
+            onChange={(e) => {
+              setAmountMin(e.target.value);
+              resetForFilterChange();
+            }}
+            style={{ ...inputStyle, width: 90 }}
+          />
+        </label>
+        <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12.5, color: "var(--muted)" }}>
+          Max $
+          <input
+            type="number"
+            step="0.01"
+            min="0"
+            value={amountMax}
+            onChange={(e) => {
+              setAmountMax(e.target.value);
+              resetForFilterChange();
+            }}
+            style={{ ...inputStyle, width: 90 }}
+          />
+        </label>
         <select
           value={cardFilter}
           onChange={(e) => {
@@ -215,9 +335,39 @@ export function Transactions({
           style={inputStyle}
         >
           <option value="all">All Cards</option>
-          {appState.cards.map((c) => (
+          {sortedCards.map((c) => (
             <option key={c.id} value={c.id}>
               {c.name}
+            </option>
+          ))}
+        </select>
+        <select
+          value={vendorFilter ?? "all"}
+          onChange={(e) => {
+            setVendorFilter(e.target.value === "all" ? null : e.target.value);
+            resetForFilterChange();
+          }}
+          style={inputStyle}
+        >
+          <option value="all">All Parents</option>
+          {sortedParents.map((p) => (
+            <option key={p.id} value={p.id}>
+              {p.name}
+            </option>
+          ))}
+        </select>
+        <select
+          value={childVendorFilter ?? "all"}
+          onChange={(e) => {
+            setChildVendorFilter(e.target.value === "all" ? null : e.target.value);
+            resetForFilterChange();
+          }}
+          style={inputStyle}
+        >
+          <option value="all">All Vendors</option>
+          {sortedChildren.map((c) => (
+            <option key={c.id} value={c.id}>
+              {c.rawName.trim() || "(no description)"}
             </option>
           ))}
         </select>
@@ -252,37 +402,63 @@ export function Transactions({
           <option value="cashback">Cashback</option>
           <option value="fee">Fee / Interest</option>
         </select>
-        {vendorFilter && (
-          <span
-            style={{
-              display: "inline-flex",
-              alignItems: "center",
-              gap: 6,
-              background: "var(--panel)",
-              border: "1px solid var(--border)",
-              borderRadius: 20,
-              padding: "5px 10px",
-              fontSize: 12.5,
-            }}
-          >
-            Vendor: {parentById.get(vendorFilter)?.name || vendorFilter}
-            <button
-              onClick={() => {
-                setVendorFilter(null);
-                resetForFilterChange();
-              }}
-              style={{ border: "none", background: "transparent", cursor: "pointer", color: "var(--muted)", fontSize: 13 }}
-            >
-              ×
-            </button>
-          </span>
-        )}
       </div>
 
       <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 8, flexWrap: "wrap" }}>
         <div style={{ fontSize: 12.5, color: "var(--muted)" }}>
           {filtered.length} transaction{filtered.length === 1 ? "" : "s"}
         </div>
+        {isFiltered && (
+          <button
+            onClick={resetAllFilters}
+            style={{ border: "1px solid var(--border)", background: "transparent", color: "var(--muted)", borderRadius: 8, padding: "5px 10px", fontSize: 12, fontWeight: 600 }}
+          >
+            Reset filters
+          </button>
+        )}
+        {isFiltered && filtered.length > 0 && (
+          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            {confirmingDeleteFiltered ? (
+              <>
+                <span style={{ fontSize: 12.5, color: "var(--attention)" }}>
+                  Delete all {filtered.length} filtered transaction{filtered.length === 1 ? "" : "s"}?
+                </span>
+                <button
+                  onClick={handleDeleteFiltered}
+                  disabled={deletingFiltered}
+                  style={{
+                    border: "1px solid var(--attention)",
+                    background: "var(--attention)",
+                    color: "white",
+                    borderRadius: 8,
+                    padding: "5px 10px",
+                    fontSize: 12,
+                    fontWeight: 600,
+                    cursor: deletingFiltered ? "not-allowed" : "pointer",
+                    opacity: deletingFiltered ? 0.7 : 1,
+                  }}
+                >
+                  {deletingFiltered ? "Deleting…" : "Confirm"}
+                </button>
+                <button
+                  onClick={() => setConfirmingDeleteFiltered(false)}
+                  disabled={deletingFiltered}
+                  style={{ border: "1px solid var(--border)", background: "transparent", color: "var(--text)", borderRadius: 8, padding: "5px 10px", fontSize: 12, fontWeight: 600 }}
+                >
+                  Cancel
+                </button>
+              </>
+            ) : (
+              <button
+                onClick={() => setConfirmingDeleteFiltered(true)}
+                title="Delete every transaction matching the current filters, not just what's loaded on this page"
+                style={{ border: "1px solid var(--attention)", background: "transparent", color: "var(--attention)", borderRadius: 8, padding: "5px 10px", fontSize: 12, fontWeight: 600 }}
+              >
+                Delete filtered…
+              </button>
+            )}
+          </div>
+        )}
         {selectedIds.size > 0 && (
           <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
             <span style={{ fontSize: 12.5, color: "var(--muted)" }}>{selectedIds.size} selected</span>
@@ -349,11 +525,11 @@ export function Transactions({
                   title="Select all loaded transactions"
                 />
               </th>
-              {["Date", "Card", "Vendor", "Category", "Type", "Amount"].map((h, i) => (
+              {["Date", "Card", "Parent", "Vendor", "Category", "Type", "Net Amount"].map((h, i) => (
                 <th
                   key={h}
                   style={{
-                    textAlign: i === 5 ? "right" : "left",
+                    textAlign: i === 6 ? "right" : "left",
                     padding: "10px 12px",
                     borderBottom: "1px solid var(--border)",
                     color: "var(--muted)",
@@ -371,9 +547,17 @@ export function Transactions({
               const categoryId = categoryIdForTransaction(t, childById, parentById);
               const category = categoryId ? categoryById.get(categoryId) : null;
               const typeMeta = TYPE_META[t.type];
+              const vendorName = vendorNameForTransaction(t, childById);
+              const parentId = parentIdForTransaction(t, childById);
+              const parentName = parentId ? parentById.get(parentId)?.name : null;
               return (
-                <tr key={t.id} style={{ background: t.needsReview ? "oklch(0.58 0.13 35 / 0.06)" : undefined }}>
-                  <td style={{ padding: "9px 12px", borderBottom: "1px solid var(--border)" }}>
+                <tr
+                  key={t.id}
+                  onClick={() => setEditingTxn(t)}
+                  title="Edit this transaction"
+                  style={{ background: t.needsReview ? "oklch(0.58 0.13 35 / 0.06)" : undefined, cursor: "pointer" }}
+                >
+                  <td style={{ padding: "9px 12px", borderBottom: "1px solid var(--border)" }} onClick={(e) => e.stopPropagation()}>
                     <input
                       type="checkbox"
                       checked={selectedIds.has(t.id)}
@@ -392,43 +576,53 @@ export function Transactions({
                       </span>
                     )}
                   </td>
-                  <td style={{ padding: "9px 12px", borderBottom: "1px solid var(--border)" }}>
-                    <VendorCell
-                      txn={t}
-                      currentParentId={parentIdForTransaction(t, childById)}
-                      currentVendorName={vendorNameForTransaction(t, childById)}
-                      parents={sortedParents}
-                      categories={sortedCategories}
-                      onReassign={(parentId) => commitVendorReassign(t, parentId)}
-                      onCreateNew={(name, category) => commitNewVendor(t, name, category)}
-                    />
+                  <td
+                    style={{
+                      padding: "9px 12px",
+                      borderBottom: "1px solid var(--border)",
+                      maxWidth: 150,
+                      overflow: "hidden",
+                      textOverflow: "ellipsis",
+                      whiteSpace: "nowrap",
+                    }}
+                    title={parentName || "— Unassigned —"}
+                  >
+                    <span style={{ fontSize: 13, color: parentName ? undefined : "var(--muted)" }}>{parentName || "— Unassigned —"}</span>
                   </td>
-                  <td style={{ padding: "9px 12px", borderBottom: "1px solid var(--border)" }}>
+                  <td style={{ padding: "9px 12px", borderBottom: "1px solid var(--border)", maxWidth: 170, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                    <span
+                      style={{ fontSize: 12.5, color: "var(--muted)", fontStyle: vendorName?.trim() ? undefined : "italic" }}
+                      title={vendorName?.trim() || "(no description)"}
+                    >
+                      {vendorName?.trim() || "(no description)"}
+                    </span>
+                  </td>
+                  <td style={{ padding: "9px 12px", borderBottom: "1px solid var(--border)", maxWidth: 130, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                     <span style={{ fontSize: 12.5, color: "var(--muted)" }}>{category?.name || "—"}</span>
                   </td>
                   <td style={{ padding: "9px 12px", borderBottom: "1px solid var(--border)" }}>
-                    <select
-                      value={t.type}
-                      onChange={(e) => commitType(t, e.target.value as TxnType)}
+                    <span
                       style={{
-                        border: "none",
+                        display: "inline-block",
                         borderRadius: 20,
                         padding: "2px 8px",
                         fontSize: 11,
                         fontWeight: 600,
                         background: typeMeta.color,
                         color: "white",
+                        whiteSpace: "nowrap",
                       }}
                     >
-                      {(Object.keys(TYPE_META) as TxnType[]).map((type) => (
-                        <option key={type} value={type} style={{ color: "var(--text)", background: "var(--panel)" }}>
-                          {TYPE_META[type].label}
-                        </option>
-                      ))}
-                    </select>
+                      {typeMeta.label}
+                    </span>
+                    {t.excludeFromDashboard && (
+                      <span title="Excluded from Dashboard & Averages" style={{ marginLeft: 6, fontSize: 12, color: "var(--muted)" }}>
+                        ⊘
+                      </span>
+                    )}
                   </td>
                   <td style={{ padding: "9px 12px", borderBottom: "1px solid var(--border)", textAlign: "right" }}>
-                    <AmountCell txn={t} onCommitReimbursed={(raw) => commitReimbursedAmount(t, raw)} />
+                    <AmountCell txn={t} />
                   </td>
                 </tr>
               );
@@ -498,17 +692,24 @@ export function Transactions({
           )}
         </div>
       )}
+
+      {editingTxn && (
+        <TransactionEditModal
+          txn={editingTxn}
+          card={cardById.get(editingTxn.cardId)}
+          currentParentId={parentIdForTransaction(editingTxn, childById)}
+          currentVendorName={vendorNameForTransaction(editingTxn, childById)}
+          parents={sortedParents}
+          categories={sortedCategories}
+          onClose={() => setEditingTxn(null)}
+          onSave={(patch) => handleSaveEdit(editingTxn, patch)}
+        />
+      )}
     </div>
   );
 }
 
-function AmountCell({
-  txn,
-  onCommitReimbursed,
-}: {
-  txn: Transaction;
-  onCommitReimbursed: (raw: string) => void;
-}) {
+function AmountCell({ txn }: { txn: Transaction }) {
   const hasReimbursement = !!txn.reimbursedAmount;
   const net = netAmountForTransaction(txn);
   return (
@@ -519,155 +720,6 @@ function AmountCell({
       {hasReimbursement && (
         <div style={{ fontSize: 11, color: "var(--muted)", textDecoration: "line-through" }}>{fmtCurrency(txn.amount)}</div>
       )}
-      <label
-        title="Amount recovered later (e.g. employer/insurance reimbursement) that won't show up as its own transaction"
-        style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 11, color: "var(--muted)", whiteSpace: "nowrap" }}
-      >
-        Reimb.
-        <input
-          // Keyed on the stored value so the box re-mounts whenever the
-          // server's answer differs from what was typed. Without this the
-          // uncontrolled input kept showing e.g. "500" on a $50 charge that
-          // was clamped to $50, and the early-return in commitReimbursedAmount
-          // meant a second blur could never correct it.
-          key={`${txn.id}:${txn.reimbursedAmount ?? ""}`}
-          type="number"
-          step="0.01"
-          min={0}
-          max={txn.amount}
-          defaultValue={txn.reimbursedAmount ?? ""}
-          placeholder="0.00"
-          onBlur={(e) => onCommitReimbursed(e.target.value)}
-          className="inline-editable"
-          style={{ width: 56, fontSize: 11, padding: "3px 5px", borderRadius: 6, textAlign: "right", background: "transparent" }}
-        />
-      </label>
     </div>
-  );
-}
-
-function VendorCell({
-  txn,
-  currentParentId,
-  currentVendorName,
-  parents,
-  categories,
-  onReassign,
-  onCreateNew,
-}: {
-  txn: Transaction;
-  currentParentId: string | null;
-  currentVendorName: string | null;
-  parents: { id: string; name: string }[];
-  categories: { id: string; name: string }[];
-  onReassign: (parentId: string) => void;
-  onCreateNew: (name: string, category: string) => Promise<boolean>;
-}) {
-  const [creating, setCreating] = useState(false);
-  const [pickingParent, setPickingParent] = useState(false);
-  const [newName, setNewName] = useState(currentVendorName || "");
-  const [newCategory, setNewCategory] = useState("");
-
-  if (creating) {
-    return (
-      <div style={{ display: "flex", flexDirection: "column", gap: 4, minWidth: 180 }}>
-        <input
-          value={newName}
-          onChange={(e) => setNewName(e.target.value)}
-          placeholder="Vendor name"
-          style={{ ...inputStyle, fontSize: 12.5, padding: "5px 6px" }}
-        />
-        <select value={newCategory} onChange={(e) => setNewCategory(e.target.value)} style={{ ...inputStyle, fontSize: 12.5, padding: "5px 6px" }}>
-          <option value="">— Choose a category —</option>
-          {categories.map((c) => (
-            <option key={c.id} value={c.id}>
-              {c.name}
-            </option>
-          ))}
-        </select>
-        <div style={{ display: "flex", gap: 6 }}>
-          <button
-            onClick={async () => {
-              if (!newName.trim() || !newCategory) return;
-              const ok = await onCreateNew(newName.trim(), newCategory);
-              if (ok) setCreating(false);
-            }}
-            disabled={!newName.trim() || !newCategory}
-            style={{
-              border: "1px solid var(--accent)",
-              background: "var(--accent)",
-              color: "white",
-              borderRadius: 6,
-              padding: "4px 8px",
-              fontSize: 12,
-              cursor: !newName.trim() || !newCategory ? "not-allowed" : "pointer",
-              opacity: !newName.trim() || !newCategory ? 0.6 : 1,
-            }}
-          >
-            Save
-          </button>
-          <button
-            onClick={() => setCreating(false)}
-            style={{ border: "1px solid var(--border)", background: "transparent", borderRadius: 6, padding: "4px 8px", fontSize: 12 }}
-          >
-            Cancel
-          </button>
-        </div>
-      </div>
-    );
-  }
-
-  // Every visible row would otherwise mount a <select> with every parent as
-  // an <option> (n rows x m parents DOM nodes) — the same blowup fixed in
-  // VendorMappings. Only materialize the full option list for the one row
-  // actively being reassigned.
-  if (!pickingParent) {
-    return (
-      <button
-        onClick={() => setPickingParent(true)}
-        title="Change this transaction's vendor"
-        style={{
-          border: "1px solid var(--border)",
-          background: "transparent",
-          color: currentParentId ? "var(--text)" : "var(--muted)",
-          borderRadius: 6,
-          padding: "5px 6px",
-          fontSize: 12.5,
-          maxWidth: 200,
-          textAlign: "left",
-          whiteSpace: "nowrap",
-          overflow: "hidden",
-          textOverflow: "ellipsis",
-        }}
-      >
-        {currentParentId ? parents.find((p) => p.id === currentParentId)?.name || currentVendorName : "— Unassigned —"}
-      </button>
-    );
-  }
-
-  return (
-    <select
-      autoFocus
-      value={currentParentId ?? ""}
-      onChange={(e) => {
-        if (e.target.value === "__new__") {
-          setNewName(currentVendorName || cleanVendorName(txn.rawDescription));
-          setCreating(true);
-        } else {
-          onReassign(e.target.value);
-          setPickingParent(false);
-        }
-      }}
-      onBlur={() => setPickingParent(false)}
-      style={{ border: "1px solid var(--border)", borderRadius: 6, padding: "5px 6px", fontSize: 12.5, maxWidth: 200 }}
-    >
-      {!currentParentId && <option value="">— Unassigned —</option>}
-      {parents.map((p) => (
-        <option key={p.id} value={p.id}>
-          {p.name}
-        </option>
-      ))}
-      <option value="__new__">+ Create new vendor…</option>
-    </select>
   );
 }

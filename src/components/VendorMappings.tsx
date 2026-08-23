@@ -7,10 +7,19 @@ import { sortCategoriesByName } from "@/lib/categories";
 import { parentIdForTransaction } from "@/lib/vendors";
 import { PageTitle, ColorDot, inputStyle, SegmentedControl } from "./ui";
 import { useToast } from "./ToastContext";
+import type { TxnFilterSeed } from "./Transactions";
 
 type View = "parents" | "vendors";
 
-export function VendorMappings({ appState, onReload }: { appState: AppState; onReload: () => Promise<void> }) {
+export function VendorMappings({
+  appState,
+  onReload,
+  onNavigateToTransactions,
+}: {
+  appState: AppState;
+  onReload: () => Promise<void>;
+  onNavigateToTransactions: (filter: TxnFilterSeed) => void;
+}) {
   const pushToast = useToast();
   const [view, setView] = useState<View>("parents");
   const [search, setSearch] = useState("");
@@ -196,12 +205,15 @@ export function VendorMappings({ appState, onReload }: { appState: AppState; onR
                 return (
                   <div
                     key={parent.id}
-                    style={{ display: "flex", alignItems: "center", gap: 12, background: "var(--panel)", border: "1px solid var(--border)", borderRadius: 10, padding: "12px 16px" }}
+                    onClick={() => onNavigateToTransactions({ vendorFilter: parent.id })}
+                    title="View this vendor's transactions"
+                    style={{ display: "flex", alignItems: "center", gap: 12, background: "var(--panel)", border: "1px solid var(--border)", borderRadius: 10, padding: "12px 16px", cursor: "pointer" }}
                   >
                     <ColorDot color={category?.color ?? "var(--muted)"} size={14} />
                     <input
                       key={parent.id + parent.name}
                       defaultValue={parent.name}
+                      onClick={(e) => e.stopPropagation()}
                       onBlur={(e) => {
                         const value = e.target.value.trim();
                         const target = e.target;
@@ -220,95 +232,97 @@ export function VendorMappings({ appState, onReload }: { appState: AppState; onR
                     <div style={{ fontFamily: "var(--mono)", fontSize: 13, color: "var(--muted)", whiteSpace: "nowrap" }}>
                       {count} txn{count === 1 ? "" : "s"}
                     </div>
-                    <select value={parent.category} onChange={(e) => handleCategoryChange(parent.id, e.target.value)} style={{ ...inputStyle, minWidth: 160 }}>
-                      {sortedCategories.map((c) => (
-                        <option key={c.id} value={c.id}>
-                          {c.name}
-                        </option>
-                      ))}
-                    </select>
-
-                    {pendingMerge && pendingMerge.fromId === parent.id ? (
-                      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                        <span style={{ fontSize: 12.5, color: "var(--muted)", whiteSpace: "nowrap" }}>
-                          Merge into &ldquo;{pendingMerge.intoName}&rdquo;?
-                        </span>
-                        <button
-                          onClick={() => handleMerge(pendingMerge.fromId, pendingMerge.fromName, pendingMerge.intoId)}
-                          style={{ border: "1px solid var(--border)", background: "transparent", color: "var(--attention)", borderRadius: 8, padding: "7px 10px", fontSize: 12.5, fontWeight: 600 }}
-                        >
-                          Confirm
-                        </button>
-                        <button
-                          onClick={() => {
-                            setPendingMerge(null);
-                            setMergingId(null);
-                          }}
-                          style={{ border: "1px solid var(--border)", background: "transparent", color: "var(--text)", borderRadius: 8, padding: "7px 10px", fontSize: 12.5, fontWeight: 600 }}
-                        >
-                          Cancel
-                        </button>
-                      </div>
-                    ) : mergingId === parent.id ? (
-                      <select
-                        autoFocus
-                        value=""
-                        onChange={(e) => {
-                          const target = sortedParents.find((p) => p.id === e.target.value);
-                          if (target) {
-                            setPendingMerge({ fromId: parent.id, fromName: parent.name, intoId: target.id, intoName: target.name });
-                          }
-                        }}
-                        style={{ ...inputStyle, minWidth: 160 }}
-                      >
-                        <option value="">Merge into…</option>
-                        {sortedParents
-                          .filter((p) => p.id !== parent.id)
-                          .map((p) => (
-                            <option key={p.id} value={p.id}>
-                              {p.name}
-                            </option>
-                          ))}
+                    <div style={{ display: "flex", alignItems: "center", gap: 12 }} onClick={(e) => e.stopPropagation()}>
+                      <select value={parent.category} onChange={(e) => handleCategoryChange(parent.id, e.target.value)} style={{ ...inputStyle, minWidth: 160 }}>
+                        {sortedCategories.map((c) => (
+                          <option key={c.id} value={c.id}>
+                            {c.name}
+                          </option>
+                        ))}
                       </select>
-                    ) : (
-                      <button
-                        onClick={() => setMergingId(parent.id)}
-                        title="Merge this parent's vendors into another parent"
-                        style={{ border: "1px solid var(--border)", background: "transparent", color: "var(--muted)", borderRadius: 8, padding: "7px 10px", fontSize: 12.5, fontWeight: 600, whiteSpace: "nowrap" }}
-                      >
-                        Merge…
-                      </button>
-                    )}
 
-                    {confirmingDeleteId === parent.id ? (
-                      <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                        {(childCountByParent.get(parent.id) ?? 0) > 0 && (
-                          <span style={{ fontSize: 11.5, color: "var(--attention)", whiteSpace: "nowrap" }}>
-                            + {childCountByParent.get(parent.id)} vendor{childCountByParent.get(parent.id) === 1 ? "" : "s"}
+                      {pendingMerge && pendingMerge.fromId === parent.id ? (
+                        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                          <span style={{ fontSize: 12.5, color: "var(--muted)", whiteSpace: "nowrap" }}>
+                            Merge into &ldquo;{pendingMerge.intoName}&rdquo;?
                           </span>
-                        )}
-                        <button
-                          onClick={() => handleDelete(parent.id, parent.name)}
-                          style={{ border: "1px solid var(--attention)", background: "transparent", color: "var(--attention)", borderRadius: 8, padding: "7px 10px", fontSize: 12.5, fontWeight: 600, whiteSpace: "nowrap" }}
+                          <button
+                            onClick={() => handleMerge(pendingMerge.fromId, pendingMerge.fromName, pendingMerge.intoId)}
+                            style={{ border: "1px solid var(--border)", background: "transparent", color: "var(--attention)", borderRadius: 8, padding: "7px 10px", fontSize: 12.5, fontWeight: 600 }}
+                          >
+                            Confirm
+                          </button>
+                          <button
+                            onClick={() => {
+                              setPendingMerge(null);
+                              setMergingId(null);
+                            }}
+                            style={{ border: "1px solid var(--border)", background: "transparent", color: "var(--text)", borderRadius: 8, padding: "7px 10px", fontSize: 12.5, fontWeight: 600 }}
+                          >
+                            Cancel
+                          </button>
+                        </div>
+                      ) : mergingId === parent.id ? (
+                        <select
+                          autoFocus
+                          value=""
+                          onChange={(e) => {
+                            const target = sortedParents.find((p) => p.id === e.target.value);
+                            if (target) {
+                              setPendingMerge({ fromId: parent.id, fromName: parent.name, intoId: target.id, intoName: target.name });
+                            }
+                          }}
+                          style={{ ...inputStyle, minWidth: 160 }}
                         >
-                          Confirm
-                        </button>
+                          <option value="">Merge into…</option>
+                          {sortedParents
+                            .filter((p) => p.id !== parent.id)
+                            .map((p) => (
+                              <option key={p.id} value={p.id}>
+                                {p.name}
+                              </option>
+                            ))}
+                        </select>
+                      ) : (
                         <button
-                          onClick={() => setConfirmingDeleteId(null)}
-                          style={{ border: "1px solid var(--border)", background: "transparent", color: "var(--text)", borderRadius: 8, padding: "7px 10px", fontSize: 12.5, fontWeight: 600 }}
+                          onClick={() => setMergingId(parent.id)}
+                          title="Merge this parent's vendors into another parent"
+                          style={{ border: "1px solid var(--border)", background: "transparent", color: "var(--muted)", borderRadius: 8, padding: "7px 10px", fontSize: 12.5, fontWeight: 600, whiteSpace: "nowrap" }}
                         >
-                          Cancel
+                          Merge…
                         </button>
-                      </div>
-                    ) : (
-                      <button
-                        onClick={() => setConfirmingDeleteId(parent.id)}
-                        title="Delete this parent and every vendor linked to it (their transactions go back to needing review)"
-                        style={{ border: "1px solid var(--border)", background: "transparent", color: "var(--muted)", borderRadius: 8, padding: "7px 10px", fontSize: 12.5, fontWeight: 600 }}
-                      >
-                        Remove
-                      </button>
-                    )}
+                      )}
+
+                      {confirmingDeleteId === parent.id ? (
+                        <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                          {(childCountByParent.get(parent.id) ?? 0) > 0 && (
+                            <span style={{ fontSize: 11.5, color: "var(--attention)", whiteSpace: "nowrap" }}>
+                              + {childCountByParent.get(parent.id)} vendor{childCountByParent.get(parent.id) === 1 ? "" : "s"}
+                            </span>
+                          )}
+                          <button
+                            onClick={() => handleDelete(parent.id, parent.name)}
+                            style={{ border: "1px solid var(--attention)", background: "transparent", color: "var(--attention)", borderRadius: 8, padding: "7px 10px", fontSize: 12.5, fontWeight: 600, whiteSpace: "nowrap" }}
+                          >
+                            Confirm
+                          </button>
+                          <button
+                            onClick={() => setConfirmingDeleteId(null)}
+                            style={{ border: "1px solid var(--border)", background: "transparent", color: "var(--text)", borderRadius: 8, padding: "7px 10px", fontSize: 12.5, fontWeight: 600 }}
+                          >
+                            Cancel
+                          </button>
+                        </div>
+                      ) : (
+                        <button
+                          onClick={() => setConfirmingDeleteId(parent.id)}
+                          title="Delete this parent and every vendor linked to it (their transactions go back to needing review)"
+                          style={{ border: "1px solid var(--border)", background: "transparent", color: "var(--muted)", borderRadius: 8, padding: "7px 10px", fontSize: 12.5, fontWeight: 600 }}
+                        >
+                          Remove
+                        </button>
+                      )}
+                    </div>
                   </div>
                 );
               })}
@@ -331,82 +345,99 @@ export function VendorMappings({ appState, onReload }: { appState: AppState; onR
                 const parent = parentById.get(child.parentId);
                 const category = parent ? categoryById.get(parent.category) : undefined;
                 const count = txnCountByChild.get(child.id) ?? 0;
+                const displayName = child.rawName.trim() || "(no description)";
                 return (
                   <div
                     key={child.id}
-                    style={{ display: "flex", alignItems: "center", gap: 12, background: "var(--panel)", border: "1px solid var(--border)", borderRadius: 10, padding: "12px 16px" }}
+                    onClick={() => onNavigateToTransactions({ childVendorFilter: child.id })}
+                    title="View this vendor's transactions"
+                    style={{ display: "flex", alignItems: "center", gap: 12, background: "var(--panel)", border: "1px solid var(--border)", borderRadius: 10, padding: "12px 16px", cursor: "pointer" }}
                   >
                     <ColorDot color={category?.color ?? "var(--muted)"} size={14} />
-                    <span style={{ flex: 1, minWidth: 0, fontSize: 14, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={child.rawName}>
-                      {child.rawName}
+                    <span
+                      style={{
+                        flex: 1,
+                        minWidth: 0,
+                        fontSize: 14,
+                        overflow: "hidden",
+                        textOverflow: "ellipsis",
+                        whiteSpace: "nowrap",
+                        color: child.rawName.trim() ? undefined : "var(--muted)",
+                        fontStyle: child.rawName.trim() ? undefined : "italic",
+                      }}
+                      title={displayName}
+                    >
+                      {displayName}
                     </span>
                     <div style={{ fontFamily: "var(--mono)", fontSize: 13, color: "var(--muted)", whiteSpace: "nowrap" }}>
                       {count} txn{count === 1 ? "" : "s"}
                     </div>
-                    {movingChildId === child.id ? (
-                      <select
-                        autoFocus
-                        value={child.parentId}
-                        onChange={(e) => handleMoveChild(child.id, e.target.value)}
-                        onBlur={() => setMovingChildId(null)}
-                        title="Parent vendor"
-                        style={{ ...inputStyle, minWidth: 180 }}
-                      >
-                        {sortedParents.map((p) => (
-                          <option key={p.id} value={p.id}>
-                            {p.name}
-                          </option>
-                        ))}
-                      </select>
-                    ) : (
-                      <button
-                        onClick={() => setMovingChildId(child.id)}
-                        title="Change this vendor's parent"
-                        style={{
-                          border: "1px solid var(--border)",
-                          background: "transparent",
-                          color: "var(--text)",
-                          borderRadius: 8,
-                          padding: "7px 10px",
-                          fontSize: 12.5,
-                          fontWeight: 600,
-                          minWidth: 180,
-                          textAlign: "left",
-                          whiteSpace: "nowrap",
-                          overflow: "hidden",
-                          textOverflow: "ellipsis",
-                        }}
-                      >
-                        {parent?.name ?? "Unknown parent"}
-                      </button>
-                    )}
-                    {confirmingDeleteChildId === child.id ? (
-                      <div style={{ display: "flex", gap: 8 }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 12 }} onClick={(e) => e.stopPropagation()}>
+                      {movingChildId === child.id ? (
+                        <select
+                          autoFocus
+                          value={child.parentId}
+                          onChange={(e) => handleMoveChild(child.id, e.target.value)}
+                          onBlur={() => setMovingChildId(null)}
+                          title="Parent vendor"
+                          style={{ ...inputStyle, minWidth: 180 }}
+                        >
+                          {sortedParents.map((p) => (
+                            <option key={p.id} value={p.id}>
+                              {p.name}
+                            </option>
+                          ))}
+                        </select>
+                      ) : (
                         <button
-                          onClick={() => {
-                            setConfirmingDeleteChildId(null);
-                            handleDeleteChild(child.id, child.rawName);
+                          onClick={() => setMovingChildId(child.id)}
+                          title="Change this vendor's parent"
+                          style={{
+                            border: "1px solid var(--border)",
+                            background: "transparent",
+                            color: "var(--text)",
+                            borderRadius: 8,
+                            padding: "7px 10px",
+                            fontSize: 12.5,
+                            fontWeight: 600,
+                            minWidth: 180,
+                            textAlign: "left",
+                            whiteSpace: "nowrap",
+                            overflow: "hidden",
+                            textOverflow: "ellipsis",
                           }}
-                          style={{ border: "1px solid var(--border)", background: "transparent", color: "var(--attention)", borderRadius: 8, padding: "7px 10px", fontSize: 12.5, fontWeight: 600, whiteSpace: "nowrap" }}
                         >
-                          Confirm
+                          {parent?.name ?? "Unknown parent"}
                         </button>
+                      )}
+                      {confirmingDeleteChildId === child.id ? (
+                        <div style={{ display: "flex", gap: 8 }}>
+                          <button
+                            onClick={() => {
+                              setConfirmingDeleteChildId(null);
+                              handleDeleteChild(child.id, child.rawName);
+                            }}
+                            style={{ border: "1px solid var(--border)", background: "transparent", color: "var(--attention)", borderRadius: 8, padding: "7px 10px", fontSize: 12.5, fontWeight: 600, whiteSpace: "nowrap" }}
+                          >
+                            Confirm
+                          </button>
+                          <button
+                            onClick={() => setConfirmingDeleteChildId(null)}
+                            style={{ border: "1px solid var(--border)", background: "transparent", color: "var(--text)", borderRadius: 8, padding: "7px 10px", fontSize: 12.5, fontWeight: 600 }}
+                          >
+                            Cancel
+                          </button>
+                        </div>
+                      ) : (
                         <button
-                          onClick={() => setConfirmingDeleteChildId(null)}
-                          style={{ border: "1px solid var(--border)", background: "transparent", color: "var(--text)", borderRadius: 8, padding: "7px 10px", fontSize: 12.5, fontWeight: 600 }}
+                          onClick={() => setConfirmingDeleteChildId(child.id)}
+                          title="Remove this vendor name (its transactions go back to needing review)"
+                          style={{ border: "1px solid var(--border)", background: "transparent", color: "var(--muted)", borderRadius: 8, padding: "7px 10px", fontSize: 12.5, fontWeight: 600, whiteSpace: "nowrap" }}
                         >
-                          Cancel
+                          Remove
                         </button>
-                      </div>
-                    ) : (
-                      <button
-                        onClick={() => setConfirmingDeleteChildId(child.id)}
-                        title="Remove this vendor name (its transactions go back to needing review)"
-                        style={{ border: "1px solid var(--border)", background: "transparent", color: "var(--muted)", borderRadius: 8, padding: "7px 10px", fontSize: 12.5, fontWeight: 600, whiteSpace: "nowrap" }}
-                      >
-                        Remove
-                      </button>
-                    )}
+                      )}
+                    </div>
                   </div>
                 );
               })}

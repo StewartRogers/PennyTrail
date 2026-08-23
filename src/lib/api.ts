@@ -32,6 +32,10 @@ export function updateCategory(id: string, patch: { name?: string; excludeFromDa
   return request(`/api/categories/${id}`, { method: "PATCH", body: JSON.stringify(patch) });
 }
 
+export function deleteCategory(id: string): Promise<{ ok: true }> {
+  return request(`/api/categories/${id}`, { method: "DELETE" });
+}
+
 export function addTemplate(input: Omit<Template, "id">): Promise<Template> {
   return request("/api/templates", { method: "POST", body: JSON.stringify(input) });
 }
@@ -50,18 +54,35 @@ export interface ImportRow {
   vendorOverride?: string;
   categoryText?: string;
   typeText?: string;
+  // Resubmit a DuplicateRow with this set to add it despite colliding with
+  // an existing transaction (or another row in the same batch).
+  forceImport?: boolean;
+}
+
+export interface DuplicateRow {
+  date: string;
+  rawDescription: string;
+  amount: number;
+  isCharge: boolean;
+  vendorOverride?: string;
+  categoryText?: string;
+  typeText?: string;
 }
 
 export function importTransactions(
   cardId: string,
   rows: ImportRow[]
-): Promise<{ transactions: Transaction[]; counts: { total: number; auto: number; review: number; skipped: number } }> {
+): Promise<{
+  transactions: Transaction[];
+  counts: { total: number; auto: number; review: number; skipped: number; duplicates: number };
+  duplicates: DuplicateRow[];
+}> {
   return request("/api/transactions/import", { method: "POST", body: JSON.stringify({ cardId, rows }) });
 }
 
 export function updateTransaction(
   id: string,
-  patch: Partial<Pick<Transaction, "type" | "needsReview" | "childVendorId">> & {
+  patch: Partial<Pick<Transaction, "type" | "needsReview" | "childVendorId" | "date" | "amount" | "excludeFromDashboard">> & {
     parentId?: string;
     newParentName?: string;
     category?: string;

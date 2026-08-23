@@ -153,7 +153,9 @@ function AppInner() {
           <Transactions appState={appState} onReload={reload} seed={txnSeed.filter} seedKey={txnSeed.n} />
         )}
         {screen === "categories" && <Categories appState={appState} onReload={reload} />}
-        {screen === "vendors" && <VendorMappings appState={appState} onReload={reload} />}
+        {screen === "vendors" && (
+          <VendorMappings appState={appState} onReload={reload} onNavigateToTransactions={navigateToTransactions} />
+        )}
         {screen === "cards" && <Cards appState={appState} onReload={reload} />}
         {screen === "templates" && <Templates appState={appState} onReload={reload} />}
       </div>

@@ -1,17 +1,18 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import { setupScratchDataDir, jsonRequest } from "../helpers/testStore";
-import { makeCategory } from "../helpers/fixtures";
+import { makeCategory, makeParentVendor } from "../helpers/fixtures";
 
 setupScratchDataDir();
 
 let POST: typeof import("@/app/api/categories/route").POST;
 let PATCH: typeof import("@/app/api/categories/[id]/route").PATCH;
+let DELETE: typeof import("@/app/api/categories/[id]/route").DELETE;
 let readState: typeof import("@/lib/store").readState;
 let updateState: typeof import("@/lib/store").updateState;
 
 beforeEach(async () => {
   ({ POST } = await import("@/app/api/categories/route"));
-  ({ PATCH } = await import("@/app/api/categories/[id]/route"));
+  ({ PATCH, DELETE } = await import("@/app/api/categories/[id]/route"));
   ({ readState, updateState } = await import("@/lib/store"));
 });
 
@@ -193,5 +194,56 @@ describe("PATCH /api/categories/[id]", () => {
     expect(res.status).toBe(200);
     const state = await readState();
     expect(state.categories.find((c) => c.id === "cat_groceries")!.name).toBe("Groceries");
+  });
+});
+
+describe("DELETE /api/categories/[id]", () => {
+  it("deletes a category no vendor points at", async () => {
+    await seed();
+
+    const res = await DELETE(jsonRequest("http://test/api/categories/cat_groceries", "DELETE"), ctx("cat_groceries"));
+
+    expect(res.status).toBe(200);
+    const state = await readState();
+    expect(state.categories.map((c) => c.id)).toEqual(["cat_dining"]);
+  });
+
+  it("rejects deleting a category a vendor still uses, and changes nothing", async () => {
+    await seed();
+    await updateState((state) => {
+      state.parentVendors = [makeParentVendor({ id: "parent_1", name: "Costco", category: "cat_groceries" })];
+    });
+
+    const res = await DELETE(jsonRequest("http://test/api/categories/cat_groceries", "DELETE"), ctx("cat_groceries"));
+
+    expect(res.status).toBe(409);
+    const body = await res.json();
+    expect(body.error).toContain("1 vendor");
+    const state = await readState();
+    expect(state.categories.map((c) => c.id)).toContain("cat_groceries");
+  });
+
+  it("counts every vendor using the category in the rejection message", async () => {
+    await seed();
+    await updateState((state) => {
+      state.parentVendors = [
+        makeParentVendor({ id: "parent_1", name: "Costco", category: "cat_groceries" }),
+        makeParentVendor({ id: "parent_2", name: "Save-On-Foods", category: "cat_groceries" }),
+      ];
+    });
+
+    const res = await DELETE(jsonRequest("http://test/api/categories/cat_groceries", "DELETE"), ctx("cat_groceries"));
+
+    expect(res.status).toBe(409);
+    const body = await res.json();
+    expect(body.error).toContain("2 vendors");
+  });
+
+  it("returns 404 for an unknown category", async () => {
+    await seed();
+
+    const res = await DELETE(jsonRequest("http://test/api/categories/nope", "DELETE"), ctx("nope"));
+
+    expect(res.status).toBe(404);
   });
 });

@@ -83,6 +83,7 @@ export function Dashboard({
   const filtered = useMemo(() => {
     const cutoff = rangeCutoff(rangePreset);
     return appState.transactions.filter((t) => {
+      if (t.excludeFromDashboard) return false;
       if (cardFilter !== "all" && t.cardId !== cardFilter) return false;
       if (cutoff && t.date < cutoff) return false;
       const categoryId = categoryIdForTransaction(t, childById, parentById);
@@ -93,11 +94,12 @@ export function Dashboard({
 
   const purchases = useMemo(() => filtered.filter((t) => t.type === "purchase"), [filtered]);
 
-  // Spend in a dashboard-excluded category (e.g. reimbursed expenses) still
-  // gets paid off on the card, so it inflates Total Payments even though it
-  // was deliberately dropped from Total Spend. Netting this back out keeps
-  // the two KPIs comparable — Payments then reflects only what came out of
-  // the cardholder's own pocket, same as Spend does.
+  // Spend in a dashboard-excluded category or transaction (e.g. reimbursed
+  // expenses, or a one-off outlier) still gets paid off on the card, so it
+  // inflates Total Payments even though it was deliberately dropped from
+  // Total Spend. Netting this back out keeps the two KPIs comparable —
+  // Payments then reflects only what came out of the cardholder's own
+  // pocket, same as Spend does.
   const excludedSpend = useMemo(() => {
     const cutoff = rangeCutoff(rangePreset);
     return appState.transactions
@@ -105,6 +107,7 @@ export function Dashboard({
         if (t.type !== "purchase") return false;
         if (cardFilter !== "all" && t.cardId !== cardFilter) return false;
         if (cutoff && t.date < cutoff) return false;
+        if (t.excludeFromDashboard) return true;
         const categoryId = categoryIdForTransaction(t, childById, parentById);
         return categoryId ? excludedCategoryIds.has(categoryId) : false;
       })
@@ -117,7 +120,7 @@ export function Dashboard({
   const purchasesForTrend = useMemo(
     () =>
       appState.transactions.filter((t) => {
-        if (t.type !== "purchase" || (cardFilter !== "all" && t.cardId !== cardFilter)) return false;
+        if (t.type !== "purchase" || t.excludeFromDashboard || (cardFilter !== "all" && t.cardId !== cardFilter)) return false;
         const categoryId = categoryIdForTransaction(t, childById, parentById);
         return !(categoryId && excludedCategoryIds.has(categoryId));
       }),

@@ -4,14 +4,14 @@ import { useMemo, useState, type CSSProperties } from "react";
 import type { AppState, AmountConvention, AmountMode, Category, Network, TxnType } from "@/lib/types";
 import { parseCSV, guessMapping, parseAmount, parseDateFlexible } from "@/lib/csv";
 import { classifyTransactionType, cleanVendorName, resolveVendor } from "@/lib/classify";
-import { addCard, addTemplate, fetchState, importTransactions, updateCard, updateTransaction, type ImportRow } from "@/lib/api";
+import { addTemplate, fetchState, importTransactions, updateCard, updateTransaction, type DuplicateRow, type ImportRow } from "@/lib/api";
 import { fmtCurrency, fmtDateShort } from "@/lib/format";
 import { TYPE_META, sortCategoriesByName } from "@/lib/categories";
 import { PrimaryButton, SecondaryButton, Pill, inputStyle, labelStyle } from "./ui";
 import { useToast } from "./ToastContext";
 import type { Transaction } from "@/lib/types";
 
-type DateFormat = "MM/DD/YYYY" | "DD/MM/YYYY" | "YYYY-MM-DD";
+type DateFormat = "MM/DD/YYYY" | "DD/MM/YYYY" | "YYYY-MM-DD" | "Month DD, YYYY";
 
 interface Mapping {
   dateCol: number;
@@ -61,12 +61,25 @@ interface RowPreview {
 
 const STEP_LABELS = ["1 · Card", "2 · Upload & Map", "3 · Confirm", "4 · Review", "5 · Done"];
 
+// Case/whitespace-insensitive so "Date" vs "date" across two exports of the
+// same statement layout isn't treated as a real mismatch.
+function sameHeaders(a: string[], b: string[]): boolean {
+  if (a.length !== b.length) return false;
+  return a.every((h, i) => h.trim().toLowerCase() === (b[i] || "").trim().toLowerCase());
+}
+
 function computeRows(dataRows: string[][], mapping: Mapping): ParsedRow[] {
   return dataRows.map((row) => {
     const date = parseDateFlexible(row[mapping.dateCol], mapping.dateFormat);
-    const rawDescription = row[mapping.descCol] || "";
+    const vendorOverride = mapping.vendorCol > -1 ? row[mapping.vendorCol] : undefined;
+    // Some banks leave the mapped Description blank on certain rows (e.g.
+    // payment/cashback/fee lines) but still populate a separately-mapped
+    // Vendor column for them — fall back to that rather than storing an
+    // empty rawDescription, which left nothing for the review screen's
+    // suggested vendor name (or the raw-description line) to show.
+    const rawDescription = row[mapping.descCol] || vendorOverride || "";
     const extras = {
-      vendorOverride: mapping.vendorCol > -1 ? row[mapping.vendorCol] : undefined,
+      vendorOverride,
       categoryText: mapping.categoryCol > -1 ? row[mapping.categoryCol] : undefined,
       typeText: mapping.typeCol > -1 ? row[mapping.typeCol] : undefined,
     };
@@ -160,19 +173,24 @@ export function ImportWizard({
   const pushToast = useToast();
   const [step, setStep] = useState(1);
   const [cardId, setCardId] = useState<string | null>(null);
-  const [newCard, setNewCard] = useState({ name: "", bank: "", last4: "", network: "Visa" as Network });
   const [editingCardId, setEditingCardId] = useState<string | null>(null);
   const [editDraft, setEditDraft] = useState({ name: "", bank: "", network: "Visa" as Network });
 
   const [fileName, setFileName] = useState("");
-  // rawRows is the full parsed CSV, unsliced. Some banks prepend a few
-  // summary/metadata rows before the real column-header row, so headers and
-  // dataRows are derived from rawRows by skipping that many rows rather
-  // than always assuming row 0 is the header.
-  const [rawRows, setRawRows] = useState<string[][]>([]);
+  // One entry per selected file, each the full parsed CSV for that file,
+  // unsliced. Some banks prepend a few summary/metadata rows before the real
+  // column-header row, so headers and dataRows are derived by skipping that
+  // many rows rather than always assuming row 0 is the header. Selecting
+  // several files (e.g. a run of monthly statements for one card) is only
+  // sound when they share one layout, so every file is assumed to put its
+  // header at the same skipRows offset as the first — see handleFilesChange,
+  // which rejects the selection up front if any file's header row doesn't
+  // match the first file's.
+  const [fileRows, setFileRows] = useState<string[][][]>([]);
   const [skipRows, setSkipRows] = useState(0);
-  const headers = useMemo(() => rawRows[skipRows] || [], [rawRows, skipRows]);
-  const dataRows = useMemo(() => rawRows.slice(skipRows + 1), [rawRows, skipRows]);
+  const primaryRows = useMemo(() => fileRows[0] || [], [fileRows]);
+  const headers = useMemo(() => primaryRows[skipRows] || [], [primaryRows, skipRows]);
+  const dataRows = useMemo(() => fileRows.flatMap((rows) => rows.slice(skipRows + 1)), [fileRows, skipRows]);
 
   const [mapChoice, setMapChoice] = useState<string>("__new__");
   const [mapping, setMapping] = useState<Mapping>(BLANK_MAPPING);
@@ -186,15 +204,22 @@ export function ImportWizard({
   const [reviewParentId, setReviewParentId] = useState<string>("__new__");
   const [reviewNewName, setReviewNewName] = useState("");
   const [reviewCategory, setReviewCategory] = useState("");
-  const [summary, setSummary] = useState({ total: 0, auto: 0, review: 0, skipped: 0 });
-  // In-flight guards. The import POST creates a transaction per row with no
-  // de-duplication server-side, so a second click while the first request was
-  // still open imported the whole statement twice; the others are the same
-  // shape (duplicate template, duplicate card, double-counted review).
+  const [summary, setSummary] = useState({ total: 0, auto: 0, review: 0, skipped: 0, duplicates: 0 });
+  const [duplicateRows, setDuplicateRows] = useState<DuplicateRow[]>([]);
+  // Indices into duplicateRows the user has checked off as "actually valid,
+  // add it anyway" — unchecked (not in the set) by default, since a flagged
+  // duplicate is presumed to really be a duplicate until the user says otherwise.
+  const [selectedDuplicates, setSelectedDuplicates] = useState<Set<number>>(new Set());
+  const [addingDuplicates, setAddingDuplicates] = useState(false);
+  // In-flight guards. The import route now dedupes rows against what's
+  // already on file, so a stray double-click just reports the whole batch
+  // back as duplicates rather than importing it twice — but this still
+  // avoids firing the request twice for no reason. The others (template,
+  // card, review) have the same shape and no server-side dedup to fall
+  // back on, so they still need the guard to avoid actual double-writes.
   const [importing, setImporting] = useState(false);
   const [savingTemplate, setSavingTemplate] = useState(false);
   const [savingReview, setSavingReview] = useState(false);
-  const [addingCard, setAddingCard] = useState(false);
 
   const selectedCard = appState.cards.find((c) => c.id === cardId) || null;
   const sortedCategories = useMemo(() => sortCategoriesByName(appState.categories), [appState.categories]);
@@ -243,37 +268,19 @@ export function ImportWizard({
     setStep(1);
     setCardId(null);
     setFileName("");
-    setRawRows([]);
+    setFileRows([]);
     setSkipRows(0);
     setMapChoice("__new__");
     setMapping(BLANK_MAPPING);
     setTemplateName("");
     // Carrying these over meant "Import another file" started the next run
     // still holding the previous import's completion figures.
-    setSummary({ total: 0, auto: 0, review: 0, skipped: 0 });
+    setSummary({ total: 0, auto: 0, review: 0, skipped: 0, duplicates: 0 });
+    setDuplicateRows([]);
+    setSelectedDuplicates(new Set());
     setReviewQueue([]);
     setReviewTotal(0);
     setReviewResolvedCount(0);
-  }
-
-  async function handleAddCard() {
-    const name = newCard.name.trim();
-    // The cards route has no name-uniqueness check, so a second click while
-    // the first POST was open created a duplicate card — and both handlers
-    // then called setCardId, binding the statement to whichever resolved last.
-    if (!name || addingCard) return;
-    setAddingCard(true);
-    try {
-      const card = await addCard({ name, bank: newCard.bank.trim(), last4: newCard.last4.trim(), network: newCard.network });
-      setNewCard({ name: "", bank: "", last4: "", network: "Visa" });
-      await onReload();
-      setCardId(card.id);
-      pushToast(`Added card "${name}"`);
-    } catch (err) {
-      pushToast(err instanceof Error ? err.message : "Failed to add card");
-    } finally {
-      setAddingCard(false);
-    }
   }
 
   function startEditCard(c: { id: string; name: string; bank: string; network: Network }) {
@@ -294,26 +301,52 @@ export function ImportWizard({
     }
   }
 
-  async function handleFileChange(file: File) {
+  async function handleFilesChange(files: File[]) {
+    if (files.length === 0) return;
     try {
-      const text = await file.text();
-      const rows = parseCSV(text);
-      if (rows.length === 0) {
-        pushToast("That file has no rows to import");
+      const parsed = await Promise.all(files.map(async (file) => ({ name: file.name, rows: parseCSV(await file.text()) })));
+      const empties = parsed.filter((p) => p.rows.length === 0);
+      if (empties.length > 0) {
+        pushToast(
+          parsed.length === 1
+            ? "That file has no rows to import"
+            : `${empties.map((p) => p.name).join(", ")} — no rows to import. Fix or remove ${empties.length === 1 ? "it" : "them"} and choose files again.`
+        );
         return;
       }
-      setFileName(file.name);
-      setRawRows(rows);
-      if (matchingTemplates.length > 0) {
-        const t = matchingTemplates[0];
-        setSkipRows(t.skipRows ?? 0);
-        applyTemplate(t.id, rows[t.skipRows ?? 0] || []);
+
+      // A bank can have more than one saved template (re-saved after the
+      // export format changed, an abandoned experiment, etc.) — picking
+      // whichever sorts first ignored that and could silently apply a
+      // stale skipRows/column mapping to a file it doesn't actually match.
+      // Verify a candidate's snapshot against this file's real content
+      // before trusting its skipRows, instead of assuming the first one
+      // saved is still the right one.
+      const t = matchingTemplates.find((c) => sameHeaders(c.headerSnapshot, parsed[0].rows[c.skipRows] || [])) ?? null;
+      const skip = t?.skipRows ?? 0;
+      // A run of files (e.g. a year's worth of monthly statements for one
+      // card) is only safe to merge if every file is laid out the same way —
+      // otherwise a column shift silently mixes up dates/amounts/vendors
+      // across files with no error. Compare each file's header row against
+      // the first file's rather than trusting the filenames or row counts.
+      const firstHeaders = parsed[0].rows[skip] || [];
+      const mismatch = parsed.slice(1).find((p) => !sameHeaders(firstHeaders, p.rows[skip] || []));
+      if (mismatch) {
+        pushToast(`"${mismatch.name}" has different columns than "${parsed[0].name}" — select files that share the same statement layout.`);
+        return;
+      }
+
+      setFileName(parsed.length === 1 ? parsed[0].name : `${parsed.length} files: ${parsed.map((p) => p.name).join(", ")}`);
+      setFileRows(parsed.map((p) => p.rows));
+      if (t) {
+        setSkipRows(skip);
+        applyTemplate(t.id, firstHeaders);
       } else {
         setSkipRows(0);
-        applyTemplate("__new__", rows[0] || []);
+        applyTemplate("__new__", firstHeaders);
       }
     } catch (err) {
-      pushToast(err instanceof Error ? err.message : "Failed to read that file");
+      pushToast(err instanceof Error ? err.message : "Failed to read the selected file(s)");
     }
   }
 
@@ -322,9 +355,9 @@ export function ImportWizard({
   // previous mapping's column positions no longer mean anything once the
   // header row itself has moved.
   function handleSkipRowsChange(newSkip: number) {
-    const clamped = Math.max(0, Math.min(newSkip, Math.max(0, rawRows.length - 1)));
+    const clamped = Math.max(0, Math.min(newSkip, Math.max(0, primaryRows.length - 1)));
     setSkipRows(clamped);
-    applyTemplate("__new__", rawRows[clamped] || []);
+    applyTemplate("__new__", primaryRows[clamped] || []);
   }
 
   function applyTemplate(templateId: string, headerOverride?: string[]) {
@@ -432,6 +465,7 @@ export function ImportWizard({
       const res = await importTransactions(cardId, rows);
       await onReload();
       setSummary(res.counts);
+      setDuplicateRows(res.duplicates);
       const needsReview = res.transactions.filter((t) => t.needsReview);
       // These two must reset for *every* import, not just ones that need
       // review — they were reset inside the branch below, so an import with
@@ -450,6 +484,62 @@ export function ImportWizard({
       pushToast(err instanceof Error ? err.message : "Failed to import transactions");
     } finally {
       setImporting(false);
+    }
+  }
+
+  function toggleDuplicateSelected(index: number) {
+    setSelectedDuplicates((prev) => {
+      const next = new Set(prev);
+      if (next.has(index)) next.delete(index);
+      else next.add(index);
+      return next;
+    });
+  }
+
+  async function addSelectedDuplicates() {
+    if (!cardId || selectedDuplicates.size === 0 || addingDuplicates) return;
+    setAddingDuplicates(true);
+    const chosen = duplicateRows.filter((_, i) => selectedDuplicates.has(i));
+    const rows: ImportRow[] = chosen.map((d) => ({
+      date: d.date,
+      rawDescription: d.rawDescription,
+      amount: d.amount,
+      isCharge: d.isCharge,
+      vendorOverride: d.vendorOverride,
+      categoryText: d.categoryText,
+      typeText: d.typeText,
+      forceImport: true,
+    }));
+    try {
+      const res = await importTransactions(cardId, rows);
+      await onReload();
+      setDuplicateRows((prev) => prev.filter((_, i) => !selectedDuplicates.has(i)));
+      setSummary((s) => ({
+        total: s.total + res.counts.total,
+        auto: s.auto + res.counts.auto,
+        review: s.review + res.counts.review,
+        skipped: s.skipped + res.counts.skipped,
+        duplicates: s.duplicates - res.counts.total,
+      }));
+      pushToast(`Added ${res.counts.total} transaction${res.counts.total === 1 ? "" : "s"} as valid`);
+      setSelectedDuplicates(new Set());
+      // Same as a fresh import: a forced row can still need review (e.g. no
+      // vendor match yet), so route it through the normal review queue
+      // rather than silently leaving it unclassified.
+      const needsReview = res.transactions.filter((t) => t.needsReview);
+      if (needsReview.length > 0) {
+        // reviewResolvedCount is deliberately not reset here — it's the
+        // running total shown on the completion screen, and this batch is a
+        // continuation of the same import, not a new one.
+        setReviewQueue(needsReview);
+        setReviewTotal(needsReview.length);
+        seedReviewFields(needsReview);
+        setStep(4);
+      }
+    } catch (err) {
+      pushToast(err instanceof Error ? err.message : "Failed to add selected transactions");
+    } finally {
+      setAddingDuplicates(false);
     }
   }
 
@@ -581,152 +671,66 @@ export function ImportWizard({
       {step === 1 && (
         <div style={{ maxWidth: 560 }}>
           <div style={{ fontSize: 15, fontWeight: 600, marginBottom: 12 }}>Which card is this statement for?</div>
-          <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 20 }}>
-            {appState.cards.map((c) =>
-              editingCardId === c.id ? (
-                <div key={c.id} style={{ border: "1px solid var(--accent)", borderRadius: 10, padding: "12px 14px", background: "var(--panel)" }}>
-                  <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 8 }}>
-                    <input
-                      value={editDraft.name}
-                      onChange={(e) => setEditDraft({ ...editDraft, name: e.target.value })}
-                      placeholder="Card nickname"
-                      style={{ ...inputStyle, flex: 1, minWidth: 140 }}
-                    />
-                    <input
-                      value={editDraft.bank}
-                      onChange={(e) => setEditDraft({ ...editDraft, bank: e.target.value })}
-                      placeholder="Bank"
-                      style={{ ...inputStyle, flex: 1, minWidth: 120 }}
-                    />
-                  </div>
-                  <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-                    {(["Visa", "Mastercard"] as Network[]).map((n) => (
-                      <button
-                        key={n}
-                        onClick={() => setEditDraft({ ...editDraft, network: n })}
-                        style={{
-                          border: "1px solid var(--border)",
-                          borderRadius: 6,
-                          padding: "5px 10px",
-                          fontSize: 12,
-                          fontWeight: 600,
-                          background: editDraft.network === n ? "var(--accent)" : "transparent",
-                          color: editDraft.network === n ? "white" : "var(--text)",
-                        }}
-                      >
-                        {n}
-                      </button>
-                    ))}
-                    <div style={{ marginLeft: "auto", display: "flex", gap: 8 }}>
-                      <SecondaryButton onClick={() => setEditingCardId(null)}>Cancel</SecondaryButton>
-                      <PrimaryButton onClick={() => saveCardEdit(c.id)}>Save</PrimaryButton>
-                    </div>
-                  </div>
-                </div>
-              ) : (
-                // Selecting a card was a bare div onClick, and "Continue →"
-                // only renders once cardId is set — so with no role, tabIndex
-                // or key handler the entire import flow was unreachable
-                // without a mouse.
-                <div
-                  key={c.id}
-                  role="radio"
-                  aria-checked={cardId === c.id}
-                  tabIndex={0}
-                  onClick={() => setCardId(c.id)}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter" || e.key === " ") {
-                      e.preventDefault();
-                      setCardId(c.id);
-                    }
-                  }}
-                  style={{
-                    display: "flex",
-                    alignItems: "center",
-                    gap: 10,
-                    border: cardId === c.id ? "1px solid var(--accent)" : "1px solid var(--border)",
-                    background: cardId === c.id ? "oklch(0.55 0.15 250 / 0.06)" : "var(--panel)",
-                    borderRadius: 10,
-                    padding: "12px 14px",
-                    cursor: "pointer",
-                  }}
-                >
-                  <span style={{ width: 10, height: 10, borderRadius: "50%", background: c.color, flexShrink: 0 }} />
-                  <div style={{ flex: 1 }}>
-                    <div style={{ fontSize: 14, fontWeight: 500 }}>{c.name}</div>
-                    <div style={{ fontSize: 12, color: "var(--muted)" }}>
-                      {c.bank} · {c.network} ····{c.last4}
-                    </div>
-                  </div>
+
+          {editingCardId ? (
+            <div style={{ border: "1px solid var(--accent)", borderRadius: 10, padding: "12px 14px", background: "var(--panel)", marginBottom: 20 }}>
+              <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 8 }}>
+                <input
+                  value={editDraft.name}
+                  onChange={(e) => setEditDraft({ ...editDraft, name: e.target.value })}
+                  placeholder="Card nickname"
+                  style={{ ...inputStyle, flex: 1, minWidth: 140 }}
+                />
+                <input
+                  value={editDraft.bank}
+                  onChange={(e) => setEditDraft({ ...editDraft, bank: e.target.value })}
+                  placeholder="Bank"
+                  style={{ ...inputStyle, flex: 1, minWidth: 120 }}
+                />
+              </div>
+              <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                {(["Visa", "Mastercard"] as Network[]).map((n) => (
                   <button
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      startEditCard(c);
-                    }}
+                    key={n}
+                    onClick={() => setEditDraft({ ...editDraft, network: n })}
                     style={{
-                      background: "transparent",
                       border: "1px solid var(--border)",
                       borderRadius: 6,
-                      padding: "4px 10px",
-                      fontSize: 11.5,
-                      color: "var(--muted)",
-                      flexShrink: 0,
+                      padding: "5px 10px",
+                      fontSize: 12,
+                      fontWeight: 600,
+                      background: editDraft.network === n ? "var(--accent)" : "transparent",
+                      color: editDraft.network === n ? "white" : "var(--text)",
                     }}
                   >
-                    Edit
+                    {n}
                   </button>
+                ))}
+                <div style={{ marginLeft: "auto", display: "flex", gap: 8 }}>
+                  <SecondaryButton onClick={() => setEditingCardId(null)}>Cancel</SecondaryButton>
+                  <PrimaryButton onClick={() => saveCardEdit(editingCardId)}>Save</PrimaryButton>
                 </div>
-              )
-            )}
-          </div>
-
-          <div style={{ border: "1px dashed var(--border)", borderRadius: 10, padding: "14px 16px", marginBottom: 20 }}>
-            <div style={{ fontSize: 12.5, fontWeight: 600, color: "var(--muted)", marginBottom: 10 }}>+ Add a new card</div>
-            <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 8 }}>
-              <input
-                value={newCard.name}
-                onChange={(e) => setNewCard({ ...newCard, name: e.target.value })}
-                placeholder="Card nickname"
-                style={{ ...inputStyle, flex: 1, minWidth: 140 }}
-              />
-              <input
-                value={newCard.bank}
-                onChange={(e) => setNewCard({ ...newCard, bank: e.target.value })}
-                placeholder="Bank"
-                style={{ ...inputStyle, flex: 1, minWidth: 120 }}
-              />
-              <input
-                value={newCard.last4}
-                onChange={(e) => setNewCard({ ...newCard, last4: e.target.value })}
-                placeholder="Last 4"
-                style={{ ...inputStyle, width: 70 }}
-              />
-            </div>
-            <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-              {(["Visa", "Mastercard"] as Network[]).map((n) => (
-                <button
-                  key={n}
-                  onClick={() => setNewCard({ ...newCard, network: n })}
-                  style={{
-                    border: "1px solid var(--border)",
-                    borderRadius: 6,
-                    padding: "5px 10px",
-                    fontSize: 12,
-                    fontWeight: 600,
-                    background: newCard.network === n ? "var(--accent)" : "transparent",
-                    color: newCard.network === n ? "white" : "var(--text)",
-                  }}
-                >
-                  {n}
-                </button>
-              ))}
-              <div style={{ marginLeft: "auto" }}>
-                <PrimaryButton onClick={handleAddCard} disabled={addingCard}>
-                  {addingCard ? "Adding…" : "Add Card"}
-                </PrimaryButton>
               </div>
             </div>
-          </div>
+          ) : (
+            <div style={{ display: "flex", gap: 8, marginBottom: 20 }}>
+              <select
+                value={cardId ?? ""}
+                onChange={(e) => setCardId(e.target.value || null)}
+                style={{ ...inputStyle, flex: 1, width: "100%" }}
+              >
+                <option value="" disabled>
+                  {appState.cards.length ? "— Select a card —" : "No cards yet — add one on the Cards page first"}
+                </option>
+                {appState.cards.map((c) => (
+                  <option key={c.id} value={c.id}>
+                    {c.name} — {c.bank} · {c.network} ····{c.last4}
+                  </option>
+                ))}
+              </select>
+              {selectedCard && <SecondaryButton onClick={() => startEditCard(selectedCard)}>Edit</SecondaryButton>}
+            </div>
+          )}
 
           {cardId && <PrimaryButton onClick={() => setStep(2)}>Continue →</PrimaryButton>}
         </div>
@@ -734,7 +738,11 @@ export function ImportWizard({
 
       {step === 2 && (
         <div style={{ maxWidth: 640 }}>
-          <div style={{ fontSize: 15, fontWeight: 600, marginBottom: 10 }}>Upload the statement CSV</div>
+          <div style={{ fontSize: 15, fontWeight: 600, marginBottom: 4 }}>Upload the statement CSV</div>
+          <div style={{ fontSize: 12, color: "var(--muted)", marginBottom: 10 }}>
+            Pick one file, or several statements for this same card (e.g. a run of monthly exports) — they must share the
+            same column layout.
+          </div>
           <label
             style={{
               display: "inline-flex",
@@ -759,13 +767,17 @@ export function ImportWizard({
                 flexShrink: 0,
               }}
             >
-              Choose File
+              Choose File(s)
             </span>
             <span style={{ fontSize: 13.5, color: fileName ? "var(--text)" : "var(--muted)" }}>{fileName || "No file chosen"}</span>
             <input
               type="file"
               accept=".csv"
-              onChange={(e) => e.target.files?.[0] && handleFileChange(e.target.files[0])}
+              multiple
+              onChange={(e) => {
+                if (e.target.files && e.target.files.length > 0) handleFilesChange(Array.from(e.target.files));
+                e.target.value = "";
+              }}
               style={{ display: "none" }}
             />
           </label>
@@ -773,20 +785,20 @@ export function ImportWizard({
           {headers.length > 0 && (
             <>
               <div style={{ fontSize: 12.5, color: "var(--muted)", marginBottom: 12 }}>
-                {fileName} · {dataRows.length} rows detected
+                {fileName} · {dataRows.length} rows detected{fileRows.length > 1 ? ` across ${fileRows.length} files` : ""}
               </div>
               <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 12 }}>
                 <label style={{ fontSize: 12.5, color: "var(--muted)" }}>Header row</label>
                 <input
                   type="number"
                   min={1}
-                  max={Math.max(1, rawRows.length)}
+                  max={Math.max(1, primaryRows.length)}
                   value={skipRows + 1}
                   onChange={(e) => handleSkipRowsChange(Number(e.target.value) - 1)}
                   style={{ ...inputStyle, width: 64, padding: "6px 8px", fontSize: 13 }}
                 />
                 <span style={{ fontSize: 12, color: "var(--muted)" }}>
-                  of {rawRows.length} rows in the file
+                  of {primaryRows.length} rows in {fileRows.length > 1 ? "the first file" : "the file"}
                   {skipRows > 0 ? ` — skipping ${skipRows} row${skipRows === 1 ? "" : "s"} above the header` : ""}
                 </span>
               </div>
@@ -856,6 +868,7 @@ export function ImportWizard({
                             <option value="MM/DD/YYYY">MM/DD/YYYY</option>
                             <option value="DD/MM/YYYY">DD/MM/YYYY</option>
                             <option value="YYYY-MM-DD">YYYY-MM-DD</option>
+                            <option value="Month DD, YYYY">Month DD, YYYY</option>
                           </select>
                         </td>
                       </tr>
@@ -1158,7 +1171,68 @@ export function ImportWizard({
                 </span>
               </>
             )}
+            {summary.duplicates > 0 && (
+              <>
+                {" "}
+                <span style={{ color: "var(--attention)" }}>
+                  {summary.duplicates} row{summary.duplicates === 1 ? "" : "s"} skipped as duplicates of transactions already on file.
+                </span>
+              </>
+            )}
           </div>
+          {duplicateRows.length > 0 && (
+            <div style={{ marginBottom: 20 }}>
+              <div style={{ fontSize: 12.5, color: "var(--muted)", marginBottom: 8 }}>
+                Matched on the same card, date, description, and amount as an existing transaction. If any of these were actually separate
+                charges (e.g. two identical purchases on the same day), check them below and add them as valid transactions.
+              </div>
+              <div style={{ overflowX: "auto", border: "1px solid var(--border)", borderRadius: 10 }}>
+                <table style={{ borderCollapse: "collapse", width: "100%", fontSize: 12.5 }}>
+                  <thead>
+                    <tr>
+                      <th style={{ padding: "8px 10px", borderBottom: "1px solid var(--border)", width: 1 }} />
+                      {["Date", "Description", "Amount"].map((h, i) => (
+                        <th
+                          key={h}
+                          style={{ textAlign: i === 2 ? "right" : "left", padding: "8px 10px", borderBottom: "1px solid var(--border)", color: "var(--muted)" }}
+                        >
+                          {h}
+                        </th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {duplicateRows.map((d, i) => (
+                      <tr key={i}>
+                        <td style={{ padding: "7px 10px", borderBottom: "1px solid var(--border)" }}>
+                          <input
+                            type="checkbox"
+                            checked={selectedDuplicates.has(i)}
+                            onChange={() => toggleDuplicateSelected(i)}
+                            aria-label={`Add ${d.rawDescription} on ${d.date} as a valid transaction`}
+                          />
+                        </td>
+                        <td style={{ padding: "7px 10px", borderBottom: "1px solid var(--border)", fontFamily: "var(--mono)" }}>{fmtDateShort(d.date)}</td>
+                        <td style={{ padding: "7px 10px", borderBottom: "1px solid var(--border)" }}>{d.rawDescription}</td>
+                        <td style={{ padding: "7px 10px", borderBottom: "1px solid var(--border)", textAlign: "right", fontFamily: "var(--mono)" }}>
+                          {fmtCurrency(d.amount)}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              {selectedDuplicates.size > 0 && (
+                <div style={{ marginTop: 12 }}>
+                  <SecondaryButton onClick={addSelectedDuplicates} disabled={addingDuplicates}>
+                    {addingDuplicates
+                      ? "Adding…"
+                      : `Add ${selectedDuplicates.size} Selected as Transaction${selectedDuplicates.size === 1 ? "" : "s"}`}
+                  </SecondaryButton>
+                </div>
+              )}
+            </div>
+          )}
           <div style={{ display: "flex", gap: 10 }}>
             <SecondaryButton onClick={resetWizard}>Import another file</SecondaryButton>
             <PrimaryButton onClick={onGoDashboard}>Go to dashboard →</PrimaryButton>

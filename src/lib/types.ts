@@ -90,6 +90,13 @@ export interface Transaction {
   // Always <= amount; partial reimbursement is expected (see
   // netAmountForTransaction in vendors.ts).
   reimbursedAmount?: number;
+  // Same idea as Category.excludeFromDashboard, but scoped to one
+  // transaction instead of every transaction under a category — for a
+  // one-off outlier (e.g. a single large purchase) that shouldn't skew
+  // Dashboard/Averages, without hiding every other transaction from the
+  // same vendor or category. Optional and defaults to "included" so
+  // existing stored transactions don't need a migration.
+  excludeFromDashboard?: boolean;
 }
 
 export interface AppState {

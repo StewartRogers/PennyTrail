@@ -276,6 +276,47 @@ describe("Dashboard top merchants", () => {
   });
 });
 
+describe("Dashboard transaction-level exclusion", () => {
+  function buildExclusionState(): AppState {
+    return makeAppState({
+      cards: [makeCard({ id: "card_a", name: "Card A" })],
+      categories: [makeCategory({ id: "cat_groceries", name: "Groceries", color: "#0a0" })],
+      parentVendors: [makeParentVendor({ id: "p_costco", name: "Costco", category: "cat_groceries" })],
+      childVendors: [makeChildVendor({ id: "c_costco", parentId: "p_costco", rawName: "Costco Wholesale" })],
+      transactions: [
+        makeTransaction({ id: "normal", cardId: "card_a", date: "2026-04-10", type: "purchase", amount: 50, childVendorId: "c_costco" }),
+        // A one-off outlier from the same vendor, excluded individually —
+        // the other Costco purchase above must still count.
+        makeTransaction({
+          id: "outlier",
+          cardId: "card_a",
+          date: "2026-04-15",
+          type: "purchase",
+          amount: 5000,
+          childVendorId: "c_costco",
+          excludeFromDashboard: true,
+        }),
+        makeTransaction({ id: "pmt", cardId: "card_a", date: "2026-05-01", type: "payment", amount: 5050, childVendorId: null }),
+      ],
+    });
+  }
+
+  it("drops a flagged transaction from Total Spend without hiding its vendor's other purchases", () => {
+    renderDashboard(buildExclusionState());
+
+    expect(kpi("Total Spend")).toBe("$50.00");
+    expect(within(panel("Breakdown")).getByText("Groceries")).toBeInTheDocument();
+    expect(within(panel("Breakdown")).getByText("$50.00")).toBeInTheDocument();
+  });
+
+  it("nets the excluded transaction's spend back out of Total Payments", () => {
+    renderDashboard(buildExclusionState());
+
+    // 5050 paid - 5000 of individually-excluded spend = 50.
+    expect(kpi("Total Payments")).toBe("$50.00");
+  });
+});
+
 describe("Dashboard avg monthly spend by category", () => {
   // The documented reason this divides by a fixed 6: a category with spend in
   // only two of the last six months averages over all six, not over the two.

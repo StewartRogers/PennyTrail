@@ -14,12 +14,41 @@ interface ImportRow {
   vendorOverride?: string;
   categoryText?: string;
   typeText?: string;
+  // Set on a resubmit of a row the user already saw flagged as a duplicate
+  // (see DuplicateRow below) and chose to add anyway — e.g. two genuinely
+  // separate same-day, same-amount payments to the same vendor. Bypasses
+  // the seenKeys check for this row only; every other validation still runs.
+  forceImport?: boolean;
+}
+
+interface DuplicateRow {
+  date: string;
+  rawDescription: string;
+  amount: number;
+  isCharge: boolean;
+  vendorOverride?: string;
+  categoryText?: string;
+  typeText?: string;
+}
+
+// Same card, date, description, and amount as an existing transaction — the
+// shape of "this exact statement line was already imported" (e.g. the same
+// CSV dropped in twice). Not part of the Transaction type itself since two
+// genuinely different purchases can collide on it (rare, but a same-day
+// same-amount trip to the same vendor is real) — so it drives a skip-and-report,
+// not a hard uniqueness constraint.
+function duplicateKey(cardId: string, date: string, rawDescription: string, amount: number): string {
+  return `${cardId}\0${date}\0${rawDescription}\0${Math.abs(amount)}`;
 }
 
 const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
 
 function isOptionalString(value: unknown): boolean {
   return value === undefined || value === null || typeof value === "string";
+}
+
+function isOptionalBoolean(value: unknown): boolean {
+  return value === undefined || value === null || typeof value === "boolean";
 }
 
 // One statement import is bounded by what a card issuer will export; anything
@@ -48,6 +77,13 @@ export async function POST(request: Request) {
     }
 
     const created: Transaction[] = [];
+    const duplicates: DuplicateRow[] = [];
+    // Seeded from what's already on file, then grown as rows are created
+    // below — so a repeated line *within* the same file (not just a whole
+    // file re-imported) is also caught, not just collisions against history.
+    const seenKeys = new Set(
+      state.transactions.map((t) => duplicateKey(t.cardId, t.date, t.rawDescription, t.amount))
+    );
     let skipped = 0;
     for (const row of rows) {
       if (
@@ -59,7 +95,8 @@ export async function POST(request: Request) {
         typeof row.isCharge !== "boolean" ||
         !isOptionalString(row.vendorOverride) ||
         !isOptionalString(row.categoryText) ||
-        !isOptionalString(row.typeText)
+        !isOptionalString(row.typeText) ||
+        !isOptionalBoolean(row.forceImport)
       ) {
         // A bad/missing amount, date, or description (e.g. an unparseable
         // or malformed CSV cell) would otherwise be stored as-is and
@@ -79,6 +116,24 @@ export async function POST(request: Request) {
         skipped++;
         continue;
       }
+
+      const key = duplicateKey(cardId, row.date, row.rawDescription, row.amount);
+      // forceImport skips the report-and-drop below — the user already saw
+      // this exact row flagged as a duplicate and chose to add it anyway.
+      if (seenKeys.has(key) && !row.forceImport) {
+        duplicates.push({
+          date: row.date,
+          rawDescription: row.rawDescription,
+          amount: Math.abs(row.amount),
+          isCharge: row.isCharge,
+          vendorOverride: row.vendorOverride,
+          categoryText: row.categoryText,
+          typeText: row.typeText,
+        });
+        continue;
+      }
+      seenKeys.add(key);
+
       const type = classifyTransactionType(row.rawDescription, row.isCharge, row.typeText, row.vendorOverride);
       const cleanedName = cleanVendorName(row.vendorOverride || row.rawDescription);
 
@@ -140,7 +195,11 @@ export async function POST(request: Request) {
     const auto = created.filter((t) => !t.needsReview).length;
     const review = created.filter((t) => t.needsReview).length;
 
-    return { transactions: created, counts: { total: created.length, auto, review, skipped } };
+    return {
+      transactions: created,
+      counts: { total: created.length, auto, review, skipped, duplicates: duplicates.length },
+      duplicates,
+    };
   });
 
   if ("error" in result) {

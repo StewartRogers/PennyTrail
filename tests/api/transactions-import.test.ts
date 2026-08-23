@@ -142,4 +142,84 @@ describe("POST /api/transactions/import", () => {
     const body = await res.json();
     expect(body.transactions[0].amount).toBe(42);
   });
+
+  it("skips a row that duplicates an already-imported transaction (e.g. the same file imported twice)", async () => {
+    const card = makeCard();
+    await writeState(makeAppState({ cards: [card] }));
+    const row = { date: "2026-03-05", rawDescription: "Costco Wholesale #456", amount: 55, isCharge: true };
+
+    const first = await importRows(card.id, [row]);
+    expect((await first.json()).counts.total).toBe(1);
+
+    const second = await importRows(card.id, [row]);
+    const body = await second.json();
+    expect(body.counts.total).toBe(0);
+    expect(body.counts.duplicates).toBe(1);
+    expect(body.duplicates).toEqual([
+      { date: row.date, rawDescription: row.rawDescription, amount: row.amount, isCharge: row.isCharge },
+    ]);
+
+    const state = await readState();
+    expect(state.transactions).toHaveLength(1);
+  });
+
+  it("skips a row that duplicates another row earlier in the same batch", async () => {
+    const card = makeCard();
+    await writeState(makeAppState({ cards: [card] }));
+    const row = { date: "2026-03-05", rawDescription: "Costco Wholesale #456", amount: 55, isCharge: true };
+
+    const res = await importRows(card.id, [row, row]);
+    const body = await res.json();
+    expect(body.counts.total).toBe(1);
+    expect(body.counts.duplicates).toBe(1);
+  });
+
+  it("does not treat a same-day same-amount row on a different card as a duplicate", async () => {
+    const cardA = makeCard({ id: "card_a" });
+    const cardB = makeCard({ id: "card_b" });
+    await writeState(makeAppState({ cards: [cardA, cardB] }));
+    const row = { date: "2026-03-05", rawDescription: "Costco Wholesale #456", amount: 55, isCharge: true };
+
+    await importRows(cardA.id, [row]);
+    const res = await importRows(cardB.id, [row]);
+    const body = await res.json();
+    expect(body.counts.total).toBe(1);
+    expect(body.counts.duplicates).toBe(0);
+  });
+
+  it("adds a forceImport row despite it colliding with an existing transaction", async () => {
+    // The user's own scenario: two genuinely separate payments of the same
+    // amount to the same vendor on the same day. The first import reports
+    // the second as a duplicate; resubmitting it with forceImport: true
+    // must add it as a real transaction instead of dropping it again.
+    const card = makeCard();
+    await writeState(makeAppState({ cards: [card] }));
+    const row = { date: "2026-03-05", rawDescription: "Costco Wholesale #456", amount: 55, isCharge: true };
+
+    await importRows(card.id, [row]);
+    const res = await importRows(card.id, [{ ...row, forceImport: true }]);
+    const body = await res.json();
+    expect(body.counts.total).toBe(1);
+    expect(body.counts.duplicates).toBe(0);
+    expect(body.transactions[0].amount).toBe(55);
+
+    const state = await readState();
+    expect(state.transactions).toHaveLength(2);
+  });
+
+  it("still reports a forceImport row as a duplicate against another forced row ahead of it in the same batch", async () => {
+    // forceImport only bypasses the check for that row itself — a third,
+    // unforced copy in the same batch still collides with the first two.
+    const card = makeCard();
+    await writeState(makeAppState({ cards: [card] }));
+    const row = { date: "2026-03-05", rawDescription: "Costco Wholesale #456", amount: 55, isCharge: true };
+
+    const res = await importRows(card.id, [row, { ...row, forceImport: true }, row]);
+    const body = await res.json();
+    expect(body.counts.total).toBe(2);
+    expect(body.counts.duplicates).toBe(1);
+
+    const state = await readState();
+    expect(state.transactions).toHaveLength(2);
+  });
 });

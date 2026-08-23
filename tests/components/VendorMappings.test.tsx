@@ -14,10 +14,14 @@ vi.mock("@/lib/api", () => ({
   updateParentVendor: vi.fn(),
 }));
 
-function renderVendorMappings(appState: AppState, onReload = vi.fn().mockResolvedValue(undefined)) {
+function renderVendorMappings(
+  appState: AppState,
+  onReload = vi.fn().mockResolvedValue(undefined),
+  onNavigateToTransactions = vi.fn()
+) {
   return render(
     <ToastProvider>
-      <VendorMappings appState={appState} onReload={onReload} />
+      <VendorMappings appState={appState} onReload={onReload} onNavigateToTransactions={onNavigateToTransactions} />
     </ToastProvider>
   );
 }
@@ -60,5 +64,60 @@ describe("VendorMappings Vendors tab", () => {
     // Now exactly one row's <select> exists, with all parents as options.
     expect(screen.getAllByRole("combobox")).toHaveLength(1);
     expect(screen.getByRole("option", { name: "Parent 1" })).toBeInTheDocument();
+  });
+
+  it("shows a fallback label for a vendor with no raw description, instead of a blank row", () => {
+    const category = makeCategory();
+    const parent = makeParentVendor({ id: "parent_0", name: "Parent 0", category: category.id });
+    const blankChild = makeChildVendor({ id: "child_blank", parentId: "parent_0", rawName: "" });
+    const appState = makeAppState({ categories: [category], parentVendors: [parent], childVendors: [blankChild] });
+
+    renderVendorMappings(appState);
+    fireEvent.click(screen.getByText("Vendors"));
+
+    expect(screen.getByText("(no description)")).toBeInTheDocument();
+  });
+});
+
+describe("VendorMappings row navigation", () => {
+  it("clicking a parent row jumps to that parent's transactions", () => {
+    const category = makeCategory();
+    const parent = makeParentVendor({ id: "parent_0", name: "Parent 0", category: category.id });
+    const child = makeChildVendor({ id: "child_0", parentId: "parent_0", rawName: "Vendor 0" });
+    const appState = makeAppState({ categories: [category], parentVendors: [parent], childVendors: [child] });
+    const onNavigateToTransactions = vi.fn();
+
+    renderVendorMappings(appState, undefined, onNavigateToTransactions);
+    fireEvent.click(screen.getByTitle("View this vendor's transactions"));
+
+    expect(onNavigateToTransactions).toHaveBeenCalledWith({ vendorFilter: "parent_0" });
+  });
+
+  it("clicking a vendor row jumps to that vendor's transactions, even with a blank raw name", () => {
+    const category = makeCategory();
+    const parent = makeParentVendor({ id: "parent_0", name: "Parent 0", category: category.id });
+    const blankChild = makeChildVendor({ id: "child_blank", parentId: "parent_0", rawName: "" });
+    const appState = makeAppState({ categories: [category], parentVendors: [parent], childVendors: [blankChild] });
+    const onNavigateToTransactions = vi.fn();
+
+    renderVendorMappings(appState, undefined, onNavigateToTransactions);
+    fireEvent.click(screen.getByText("Vendors"));
+    fireEvent.click(screen.getByTitle("View this vendor's transactions"));
+
+    expect(onNavigateToTransactions).toHaveBeenCalledWith({ childVendorFilter: "child_blank" });
+  });
+
+  it("clicking a parent row's inline controls does not also trigger navigation", () => {
+    const category = makeCategory();
+    const parent = makeParentVendor({ id: "parent_0", name: "Parent 0", category: category.id });
+    const child = makeChildVendor({ id: "child_0", parentId: "parent_0", rawName: "Vendor 0" });
+    const appState = makeAppState({ categories: [category], parentVendors: [parent], childVendors: [child] });
+    const onNavigateToTransactions = vi.fn();
+
+    renderVendorMappings(appState, undefined, onNavigateToTransactions);
+    fireEvent.click(screen.getByDisplayValue("Parent 0")); // the inline rename input
+    fireEvent.click(screen.getByRole("combobox")); // the category select
+
+    expect(onNavigateToTransactions).not.toHaveBeenCalled();
   });
 });

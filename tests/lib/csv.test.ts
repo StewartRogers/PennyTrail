@@ -114,6 +114,30 @@ describe("parseDateFlexible", () => {
   it("returns null when a component is missing", () => {
     expect(parseDateFlexible("03/2026", "MM/DD/YYYY")).toBeNull();
   });
+
+  it("parses a full month name with a comma", () => {
+    expect(parseDateFlexible("May 21, 2026", "Month DD, YYYY")).toBe("2026-05-21");
+  });
+
+  it("parses a full month name without a comma", () => {
+    expect(parseDateFlexible("May 21 2026", "Month DD, YYYY")).toBe("2026-05-21");
+  });
+
+  it("parses an abbreviated month name", () => {
+    expect(parseDateFlexible("Jan 5, 2026", "Month DD, YYYY")).toBe("2026-01-05");
+  });
+
+  it("is case-insensitive for the month name", () => {
+    expect(parseDateFlexible("december 25, 2026", "Month DD, YYYY")).toBe("2026-12-25");
+  });
+
+  it("rejects an unrecognized month name", () => {
+    expect(parseDateFlexible("Frobuary 5, 2026", "Month DD, YYYY")).toBeNull();
+  });
+
+  it("rejects an out-of-range day for Month DD, YYYY", () => {
+    expect(parseDateFlexible("Feb 30, 2026", "Month DD, YYYY")).toBeNull();
+  });
 });
 
 describe("guessMapping", () => {

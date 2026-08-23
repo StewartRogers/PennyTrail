@@ -4,7 +4,7 @@ import { uid } from "@/lib/id";
 import { MAX_NAME_LENGTH, readJsonObject } from "@/lib/request";
 import type { Template } from "@/lib/types";
 
-const DATE_FORMATS = ["MM/DD/YYYY", "DD/MM/YYYY", "YYYY-MM-DD"];
+const DATE_FORMATS = ["MM/DD/YYYY", "DD/MM/YYYY", "YYYY-MM-DD", "Month DD, YYYY"];
 
 function isValidCol(n: unknown): boolean {
   return typeof n === "number" && Number.isInteger(n) && n >= 0;

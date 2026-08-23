@@ -128,13 +128,16 @@ export function PrimaryButton({
 export function SecondaryButton({
   children,
   onClick,
+  disabled,
 }: {
   children: ReactNode;
   onClick?: () => void;
+  disabled?: boolean;
 }) {
   return (
     <button
       onClick={onClick}
+      disabled={disabled}
       style={{
         background: "var(--panel)",
         color: "var(--text)",
@@ -143,6 +146,8 @@ export function SecondaryButton({
         padding: "11px 20px",
         fontSize: 14,
         fontWeight: 600,
+        cursor: disabled ? "not-allowed" : "pointer",
+        opacity: disabled ? 0.7 : 1,
       }}
     >
       {children}

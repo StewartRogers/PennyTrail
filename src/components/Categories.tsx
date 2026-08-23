@@ -2,7 +2,7 @@
 
 import { useMemo, useState } from "react";
 import type { AppState } from "@/lib/types";
-import { addCategory, updateCategory } from "@/lib/api";
+import { addCategory, deleteCategory, updateCategory } from "@/lib/api";
 import { CATEGORY_PALETTE, sortCategoriesByName } from "@/lib/categories";
 import { categoryIdForTransaction, categorySpendForTransaction } from "@/lib/vendors";
 import { fmtCurrency } from "@/lib/format";
@@ -13,9 +13,22 @@ export function Categories({ appState, onReload }: { appState: AppState; onReloa
   const pushToast = useToast();
   const [newName, setNewName] = useState("");
   const [selectedColor, setSelectedColor] = useState<string | null>(null);
+  const [confirmingDeleteId, setConfirmingDeleteId] = useState<string | null>(null);
 
   const childById = useMemo(() => new Map(appState.childVendors.map((c) => [c.id, c])), [appState.childVendors]);
   const parentById = useMemo(() => new Map(appState.parentVendors.map((p) => [p.id, p])), [appState.parentVendors]);
+
+  // A category is never stored on a Transaction — it's always derived via
+  // childVendorId -> ChildVendor.parentId -> ParentVendor.category — so a
+  // category with zero parents pointing at it can't have any transaction
+  // linked to it either. This count alone is the full "in use" check.
+  const parentCountByCategory = useMemo(() => {
+    const map = new Map<string, number>();
+    for (const p of appState.parentVendors) {
+      map.set(p.category, (map.get(p.category) || 0) + 1);
+    }
+    return map;
+  }, [appState.parentVendors]);
 
   const totals = useMemo(() => {
     const map = new Map<string, { total: number; count: number }>();
@@ -73,67 +86,151 @@ export function Categories({ appState, onReload }: { appState: AppState; onReloa
     }
   }
 
+  async function handleDelete(id: string, name: string) {
+    try {
+      await deleteCategory(id);
+      await onReload();
+      setConfirmingDeleteId(null);
+      pushToast(`Removed "${name}"`);
+    } catch (err) {
+      pushToast(err instanceof Error ? err.message : "Failed to remove category");
+    }
+  }
+
   return (
     <div>
       <PageTitle>Categories</PageTitle>
-      <div style={{ display: "flex", flexDirection: "column", gap: 8, maxWidth: 640, marginBottom: 22 }}>
-        {sortedCategories.map((c) => {
-          const stats = totals.get(c.id) || { total: 0, count: 0 };
-          return (
-            <div
-              key={c.id}
-              style={{
-                display: "flex",
-                alignItems: "center",
-                gap: 12,
-                background: "var(--panel)",
-                border: "1px solid var(--border)",
-                borderRadius: 10,
-                padding: "12px 16px",
-              }}
-            >
-              <span style={{ width: 14, height: 14, borderRadius: "50%", background: c.color, flexShrink: 0 }} />
-              <input
-                key={c.id + c.name}
-                defaultValue={c.name}
-                onBlur={(e) => {
-                  const target = e.target;
-                  const value = target.value.trim();
-                  if (value && value !== c.name) {
-                    handleRename(c.id, value, () => {
-                      target.value = c.name;
-                    });
-                  } else {
-                    target.value = c.name;
-                  }
-                }}
-                className="inline-editable"
-                title="Click to rename"
-                style={{
-                  flex: 1,
-                  background: "transparent",
-                  fontSize: 14,
-                  padding: "5px 6px",
-                  borderRadius: 6,
-                }}
-              />
-              <div style={{ fontFamily: "var(--mono)", fontSize: 13, color: "var(--muted)", whiteSpace: "nowrap" }}>
-                {fmtCurrency(stats.total)} · {stats.count} txns
-              </div>
-              <label
+      <div style={{ overflowX: "auto", border: "1px solid var(--border)", borderRadius: 12, background: "var(--panel)", marginBottom: 22, maxWidth: 760 }}>
+        <table style={{ borderCollapse: "collapse", width: "100%", fontSize: 13 }}>
+          <thead>
+            <tr>
+              <th style={{ textAlign: "left", padding: "10px 12px", borderBottom: "1px solid var(--border)", color: "var(--muted)", fontWeight: 600 }}>
+                Category
+              </th>
+              <th style={{ textAlign: "right", padding: "10px 12px", borderBottom: "1px solid var(--border)", color: "var(--muted)", fontWeight: 600 }}>
+                Total
+              </th>
+              <th
+                style={{ textAlign: "center", padding: "10px 12px", borderBottom: "1px solid var(--border)", color: "var(--muted)", fontWeight: 600, whiteSpace: "nowrap" }}
                 title="Leave this category's transactions out of every Dashboard total, trend, and breakdown"
-                style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, color: "var(--muted)", whiteSpace: "nowrap", cursor: "pointer" }}
               >
-                <input
-                  type="checkbox"
-                  checked={!!c.excludeFromDashboard}
-                  onChange={(e) => handleToggleExclude(c.id, e.target.checked)}
-                />
-                Exclude from Dashboards
-              </label>
-            </div>
-          );
-        })}
+                Exclude
+              </th>
+              <th style={{ padding: "10px 12px", borderBottom: "1px solid var(--border)", width: 1 }} />
+            </tr>
+          </thead>
+          <tbody>
+            {sortedCategories.map((c) => {
+              const stats = totals.get(c.id) || { total: 0, count: 0 };
+              const parentCount = parentCountByCategory.get(c.id) ?? 0;
+              return (
+                <tr key={c.id}>
+                  <td style={{ padding: "9px 12px", borderBottom: "1px solid var(--border)" }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                      <span style={{ width: 12, height: 12, borderRadius: "50%", background: c.color, flexShrink: 0 }} />
+                      <input
+                        key={c.id + c.name}
+                        defaultValue={c.name}
+                        onBlur={(e) => {
+                          const target = e.target;
+                          const value = target.value.trim();
+                          if (value && value !== c.name) {
+                            handleRename(c.id, value, () => {
+                              target.value = c.name;
+                            });
+                          } else {
+                            target.value = c.name;
+                          }
+                        }}
+                        className="inline-editable"
+                        title="Click to rename"
+                        style={{
+                          flex: 1,
+                          minWidth: 0,
+                          background: "transparent",
+                          fontSize: 14,
+                          padding: "5px 6px",
+                          borderRadius: 6,
+                        }}
+                      />
+                    </div>
+                  </td>
+                  <td
+                    style={{
+                      padding: "9px 12px",
+                      borderBottom: "1px solid var(--border)",
+                      textAlign: "right",
+                      fontFamily: "var(--mono)",
+                      fontSize: 13,
+                      color: "var(--muted)",
+                      whiteSpace: "nowrap",
+                    }}
+                  >
+                    {fmtCurrency(stats.total)} · {stats.count} txns
+                  </td>
+                  <td style={{ padding: "9px 12px", borderBottom: "1px solid var(--border)", textAlign: "center" }}>
+                    <input
+                      type="checkbox"
+                      checked={!!c.excludeFromDashboard}
+                      onChange={(e) => handleToggleExclude(c.id, e.target.checked)}
+                      title="Leave this category's transactions out of every Dashboard total, trend, and breakdown"
+                    />
+                  </td>
+                  <td style={{ padding: "9px 12px", borderBottom: "1px solid var(--border)", textAlign: "right", whiteSpace: "nowrap" }}>
+                    {confirmingDeleteId === c.id ? (
+                      <div style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+                        <button
+                          onClick={() => handleDelete(c.id, c.name)}
+                          style={{
+                            border: "1px solid var(--attention)",
+                            background: "transparent",
+                            color: "var(--attention)",
+                            borderRadius: 8,
+                            padding: "7px 10px",
+                            fontSize: 12.5,
+                            fontWeight: 600,
+                            whiteSpace: "nowrap",
+                          }}
+                        >
+                          Confirm
+                        </button>
+                        <button
+                          onClick={() => setConfirmingDeleteId(null)}
+                          style={{ border: "1px solid var(--border)", background: "transparent", color: "var(--text)", borderRadius: 8, padding: "7px 10px", fontSize: 12.5, fontWeight: 600 }}
+                        >
+                          Cancel
+                        </button>
+                      </div>
+                    ) : (
+                      <button
+                        onClick={() => setConfirmingDeleteId(c.id)}
+                        disabled={parentCount > 0}
+                        title={
+                          parentCount > 0
+                            ? `${parentCount} vendor${parentCount === 1 ? "" : "s"} use this category — reassign or remove them first`
+                            : "Delete this category"
+                        }
+                        style={{
+                          border: "1px solid var(--border)",
+                          background: "transparent",
+                          color: parentCount > 0 ? "var(--border)" : "var(--muted)",
+                          borderRadius: 8,
+                          padding: "7px 10px",
+                          fontSize: 12.5,
+                          fontWeight: 600,
+                          whiteSpace: "nowrap",
+                          cursor: parentCount > 0 ? "not-allowed" : "pointer",
+                        }}
+                      >
+                        Remove
+                      </button>
+                    )}
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
       </div>
 
       <div style={{ border: "1px dashed var(--border)", borderRadius: 10, padding: "14px 16px", maxWidth: 480 }}>
