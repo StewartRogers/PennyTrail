@@ -1,17 +1,17 @@
 "use client";
 
-import { useMemo, useState, type CSSProperties } from "react";
+import { useEffect, useMemo, useState, type CSSProperties } from "react";
 import type { AppState, AmountConvention, AmountMode, Category, Network, TxnType } from "@/lib/types";
 import { parseCSV, guessMapping, parseAmount, parseDateFlexible } from "@/lib/csv";
 import { classifyTransactionType, cleanVendorName, resolveVendor } from "@/lib/classify";
-import { addTemplate, fetchState, importTransactions, updateCard, updateTransaction, type DuplicateRow, type ImportRow } from "@/lib/api";
+import { addTemplate, fetchFxRates, fetchState, importTransactions, updateCard, updateTransaction, type DuplicateRow, type ImportRow } from "@/lib/api";
 import { fmtCurrency, fmtDateShort } from "@/lib/format";
 import { TYPE_META, sortCategoriesByName } from "@/lib/categories";
 import { PrimaryButton, SecondaryButton, Pill, inputStyle, labelStyle } from "./ui";
 import { useToast } from "./ToastContext";
 import type { Transaction } from "@/lib/types";
 
-type DateFormat = "MM/DD/YYYY" | "DD/MM/YYYY" | "YYYY-MM-DD" | "Month DD, YYYY" | "YYYYMMDD";
+type DateFormat = "MM/DD/YYYY" | "DD/MM/YYYY" | "YYYY-MM-DD" | "Month DD, YYYY" | "YYYYMMDD" | "YYYY-MM-DD HH:MM:SS";
 
 interface Mapping {
   dateCol: number;
@@ -50,6 +50,7 @@ interface ParsedRow {
   vendorOverride?: string;
   categoryText?: string;
   typeText?: string;
+  conversionNote?: string;
 }
 
 interface RowPreview {
@@ -236,7 +237,72 @@ export function ImportWizard({
     return appState.templates.filter((t) => t.bank.trim().toLowerCase() === selectedCard.bank.trim().toLowerCase());
   }, [appState.templates, selectedCard]);
 
-  const parsedRows = useMemo(() => (headers.length ? computeRows(dataRows, mapping) : []), [dataRows, mapping, headers]);
+  const rawParsedRows = useMemo(() => (headers.length ? computeRows(dataRows, mapping) : []), [dataRows, mapping, headers]);
+
+  // A card whose statements come in another currency — everything else
+  // (classification, dedup, every stored amount) still assumes CAD, so
+  // conversion happens here, before any row reaches downstream logic,
+  // rather than threading currency through the rest of the wizard.
+  const fxCurrency = selectedCard?.currency && selectedCard.currency !== "CAD" ? selectedCard.currency : null;
+  const fxDateRange = useMemo(() => {
+    if (!fxCurrency) return null;
+    const dates = rawParsedRows.map((r) => r.date).filter((d): d is string => !!d);
+    if (dates.length === 0) return null;
+    return { start: dates.reduce((a, b) => (a < b ? a : b)), end: dates.reduce((a, b) => (a > b ? a : b)) };
+  }, [fxCurrency, rawParsedRows]);
+
+  // The exact (currency, start, end) combo currently in play — re-fetches
+  // whenever this changes. fxRatesFor/fxErrorFor record which key the last
+  // resolved result (success or failure) belongs to, so fxLoading can be
+  // derived (key doesn't match either yet) instead of tracked as its own
+  // state set synchronously inside the effect.
+  const fxKey = fxCurrency && fxDateRange ? `${fxCurrency}:${fxDateRange.start}:${fxDateRange.end}` : null;
+
+  const [fxRates, setFxRates] = useState<Record<string, number> | null>(null);
+  const [fxRatesFor, setFxRatesFor] = useState<string | null>(null);
+  const [fxError, setFxError] = useState<string | null>(null);
+  const [fxErrorFor, setFxErrorFor] = useState<string | null>(null);
+  const fxLoading = !!fxKey && fxKey !== fxRatesFor && fxKey !== fxErrorFor;
+
+  useEffect(() => {
+    if (!fxCurrency || !fxDateRange || !fxKey || fxKey === fxRatesFor || fxKey === fxErrorFor) return;
+    let cancelled = false;
+    fetchFxRates(fxCurrency, fxDateRange.start, fxDateRange.end)
+      .then(({ rates }) => {
+        if (cancelled) return;
+        setFxRates(rates);
+        setFxRatesFor(fxKey);
+      })
+      .catch((err) => {
+        if (cancelled) return;
+        setFxError(err instanceof Error ? err.message : "Failed to fetch exchange rates");
+        setFxErrorFor(fxKey);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [fxCurrency, fxDateRange, fxKey, fxRatesFor, fxErrorFor]);
+
+  // Rows stay amount:NaN (and so out of validRows below) until a rate is
+  // actually in hand for their date — the "Continue" button on step 2 is
+  // separately gated on fxRates being ready, so this state is never shown
+  // to the user, just a safety net against acting on unconverted amounts.
+  const parsedRows = useMemo(() => {
+    if (!fxCurrency) return rawParsedRows;
+    return rawParsedRows.map((r) => {
+      if (!r.date) return r;
+      const rate = fxRates?.[r.date];
+      if (rate == null) return { ...r, amount: NaN };
+      return {
+        ...r,
+        amount: r.amount * rate,
+        // Captured here (not just left implicit in the converted amount) so
+        // it stays visible on the transaction later — see
+        // Transaction.conversionNote.
+        conversionNote: `Converted from ${r.amount.toFixed(2)} ${fxCurrency} at ${rate} (Bank of Canada rate, ${r.date}).`,
+      };
+    });
+  }, [fxCurrency, rawParsedRows, fxRates]);
 
   const previewRows = useMemo(
     () =>
@@ -405,6 +471,10 @@ export function ImportWizard({
     mapping.dateCol > -1 &&
     mapping.descCol > -1 &&
     (mapping.amountMode === "single" ? mapping.amountCol > -1 : mapping.debitCol > -1 || mapping.creditCol > -1);
+  // No foreign currency involved, or the conversion actually succeeded —
+  // blocks moving on to a Confirm screen that would otherwise show
+  // unconverted amounts (or none at all, mid-fetch).
+  const fxReady = !fxCurrency || (!!fxKey && fxRatesFor === fxKey && !!fxRates);
 
   async function continueToStep3() {
     if (savingTemplate) return;
@@ -460,6 +530,7 @@ export function ImportWizard({
       vendorOverride: r.vendorOverride,
       categoryText: r.categoryText,
       typeText: r.typeText,
+      conversionNote: r.conversionNote,
     }));
     try {
       const res = await importTransactions(cardId, rows);
@@ -509,6 +580,7 @@ export function ImportWizard({
       categoryText: d.categoryText,
       typeText: d.typeText,
       forceImport: true,
+      conversionNote: d.conversionNote,
     }));
     try {
       const res = await importTransactions(cardId, rows);
@@ -787,6 +859,37 @@ export function ImportWizard({
               <div style={{ fontSize: 12.5, color: "var(--muted)", marginBottom: 12 }}>
                 {fileName} · {dataRows.length} rows detected{fileRows.length > 1 ? ` across ${fileRows.length} files` : ""}
               </div>
+              {fxCurrency && fxKey && (
+                <div
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 10,
+                    marginBottom: 12,
+                    padding: "8px 12px",
+                    borderRadius: 8,
+                    fontSize: 12.5,
+                    border: `1px solid ${fxErrorFor === fxKey ? "var(--attention)" : "var(--border)"}`,
+                    color: fxErrorFor === fxKey ? "var(--attention)" : "var(--muted)",
+                  }}
+                >
+                  {fxLoading ? (
+                    <>Fetching {fxCurrency}→CAD exchange rates from the Bank of Canada…</>
+                  ) : fxErrorFor === fxKey ? (
+                    <>
+                      <span style={{ flex: 1 }}>{fxError}</span>
+                      <button
+                        onClick={() => setFxErrorFor(null)}
+                        style={{ border: "1px solid var(--attention)", background: "transparent", color: "var(--attention)", borderRadius: 6, padding: "4px 10px", fontSize: 12, fontWeight: 600 }}
+                      >
+                        Retry
+                      </button>
+                    </>
+                  ) : fxRatesFor === fxKey ? (
+                    <>Converting from {fxCurrency} to CAD using the Bank of Canada&apos;s daily rate for each transaction&apos;s date.</>
+                  ) : null}
+                </div>
+              )}
               <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 12 }}>
                 <label style={{ fontSize: 12.5, color: "var(--muted)" }}>Header row</label>
                 <input
@@ -870,6 +973,7 @@ export function ImportWizard({
                             <option value="YYYY-MM-DD">YYYY-MM-DD</option>
                             <option value="Month DD, YYYY">Month DD, YYYY</option>
                             <option value="YYYYMMDD">YYYYMMDD</option>
+                            <option value="YYYY-MM-DD HH:MM:SS">YYYY-MM-DD HH:MM:SS</option>
                           </select>
                         </td>
                       </tr>
@@ -1013,7 +1117,7 @@ export function ImportWizard({
           <div style={{ display: "flex", gap: 10 }}>
             <SecondaryButton onClick={() => setStep(1)}>← Back</SecondaryButton>
             {headers.length > 0 && (
-              <PrimaryButton disabled={!mappingComplete || savingTemplate} onClick={continueToStep3}>
+              <PrimaryButton disabled={!mappingComplete || savingTemplate || !fxReady} onClick={continueToStep3}>
                 Continue →
               </PrimaryButton>
             )}

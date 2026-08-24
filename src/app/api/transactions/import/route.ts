@@ -19,6 +19,10 @@ interface ImportRow {
   // separate same-day, same-amount payments to the same vendor. Bypasses
   // the seenKeys check for this row only; every other validation still runs.
   forceImport?: boolean;
+  // See Transaction.conversionNote — set by the wizard for a row converted
+  // from a foreign-currency card, carried straight through onto the stored
+  // transaction.
+  conversionNote?: string;
 }
 
 interface DuplicateRow {
@@ -29,6 +33,7 @@ interface DuplicateRow {
   vendorOverride?: string;
   categoryText?: string;
   typeText?: string;
+  conversionNote?: string;
 }
 
 // Same card, date, description, and amount as an existing transaction — the
@@ -96,7 +101,8 @@ export async function POST(request: Request) {
         !isOptionalString(row.vendorOverride) ||
         !isOptionalString(row.categoryText) ||
         !isOptionalString(row.typeText) ||
-        !isOptionalBoolean(row.forceImport)
+        !isOptionalBoolean(row.forceImport) ||
+        !isOptionalString(row.conversionNote)
       ) {
         // A bad/missing amount, date, or description (e.g. an unparseable
         // or malformed CSV cell) would otherwise be stored as-is and
@@ -129,6 +135,7 @@ export async function POST(request: Request) {
           vendorOverride: row.vendorOverride,
           categoryText: row.categoryText,
           typeText: row.typeText,
+          conversionNote: row.conversionNote,
         });
         continue;
       }
@@ -186,6 +193,7 @@ export async function POST(request: Request) {
         type,
         childVendorId,
         needsReview,
+        ...(row.conversionNote?.trim() ? { conversionNote: row.conversionNote.trim() } : {}),
       };
       state.transactions.push(txn);
       created.push(txn);

@@ -21,6 +21,10 @@ export async function POST(request: Request) {
   const bank = readString(body.bank);
   const last4 = readString(body.last4);
   const network: Network = body.network === "Mastercard" ? "Mastercard" : "Visa";
+  // Blank or unrecognized normalizes to CAD, same leniency as network
+  // above — an add-card form shouldn't hard-reject over this field.
+  const rawCurrency = readString(body.currency).toUpperCase();
+  const currency = /^[A-Z]{3}$/.test(rawCurrency) ? rawCurrency : "CAD";
   if (!name) {
     return NextResponse.json({ error: "Card nickname is required" }, { status: 400 });
   }
@@ -30,7 +34,7 @@ export async function POST(request: Request) {
 
   const { result: card } = await updateState((state) => {
     const color = CARD_COLORS[state.cards.length % CARD_COLORS.length];
-    const newCard: Card = { id: uid("card"), name, bank, network, last4, color };
+    const newCard: Card = { id: uid("card"), name, bank, network, last4, color, currency };
     state.cards.push(newCard);
     return newCard;
   });

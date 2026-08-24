@@ -155,6 +155,26 @@ describe("parseDateFlexible", () => {
   it("rejects a calendar-impossible day for YYYYMMDD", () => {
     expect(parseDateFlexible("20260230", "YYYYMMDD")).toBeNull();
   });
+
+  it("parses YYYY-MM-DD HH:MM:SS, discarding the time", () => {
+    expect(parseDateFlexible("2026-03-24 23:43:39", "YYYY-MM-DD HH:MM:SS")).toBe("2026-03-24");
+  });
+
+  it("also accepts a T separator (ISO 8601 datetime)", () => {
+    expect(parseDateFlexible("2026-03-24T23:43:39", "YYYY-MM-DD HH:MM:SS")).toBe("2026-03-24");
+  });
+
+  it("accepts the date-time format even without seconds", () => {
+    expect(parseDateFlexible("2026-03-24 23:43", "YYYY-MM-DD HH:MM:SS")).toBe("2026-03-24");
+  });
+
+  it("rejects a bare date with no time for YYYY-MM-DD HH:MM:SS", () => {
+    expect(parseDateFlexible("2026-03-24", "YYYY-MM-DD HH:MM:SS")).toBeNull();
+  });
+
+  it("rejects a calendar-impossible date for YYYY-MM-DD HH:MM:SS", () => {
+    expect(parseDateFlexible("2026-02-30 12:00:00", "YYYY-MM-DD HH:MM:SS")).toBeNull();
+  });
 });
 
 describe("guessMapping", () => {

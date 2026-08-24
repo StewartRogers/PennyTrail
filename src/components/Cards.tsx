@@ -36,6 +36,7 @@ export function Cards({ appState, onReload }: { appState: AppState; onReload: ()
   const [bank, setBank] = useState("");
   const [last4, setLast4] = useState("");
   const [network, setNetwork] = useState<Network>("Visa");
+  const [currency, setCurrency] = useState("");
 
   const totals = useMemo(() => {
     const map = new Map<string, number>();
@@ -50,11 +51,12 @@ export function Cards({ appState, onReload }: { appState: AppState; onReload: ()
     const trimmedName = name.trim();
     if (!trimmedName) return;
     try {
-      await addCard({ name: trimmedName, bank: bank.trim(), last4: last4.trim(), network });
+      await addCard({ name: trimmedName, bank: bank.trim(), last4: last4.trim(), network, currency: currency.trim() });
       setName("");
       setBank("");
       setLast4("");
       setNetwork("Visa");
+      setCurrency("");
       await onReload();
       pushToast(`Added card "${trimmedName}"`);
     } catch (err) {
@@ -84,6 +86,14 @@ export function Cards({ appState, onReload }: { appState: AppState; onReload: ()
           <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Card nickname" style={{ ...inputStyle, flex: 1, minWidth: 140 }} />
           <input value={bank} onChange={(e) => setBank(e.target.value)} placeholder="Bank" style={{ ...inputStyle, flex: 1, minWidth: 120 }} />
           <input value={last4} onChange={(e) => setLast4(e.target.value)} placeholder="Last 4" style={{ ...inputStyle, width: 70 }} />
+          <input
+            value={currency}
+            onChange={(e) => setCurrency(e.target.value)}
+            placeholder="CAD"
+            maxLength={3}
+            title="Statement currency — leave as CAD unless this card bills in something else"
+            style={{ ...inputStyle, width: 60, textTransform: "uppercase" }}
+          />
         </div>
         <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
           <NetworkToggle value={network} onChange={setNetwork} />
@@ -157,6 +167,36 @@ export function Cards({ appState, onReload }: { appState: AppState; onReload: ()
                 color: "var(--muted)",
                 padding: "5px 6px",
                 borderRadius: 6,
+              }}
+            />
+            <input
+              key={"currency:" + c.id + (c.currency || "CAD")}
+              defaultValue={c.currency || "CAD"}
+              onBlur={(e) => {
+                const target = e.target;
+                const value = target.value.trim().toUpperCase();
+                if (value && value !== (c.currency || "CAD")) {
+                  commitCardField(c.id, { currency: value }, () => {
+                    target.value = c.currency || "CAD";
+                  });
+                } else {
+                  target.value = c.currency || "CAD";
+                }
+              }}
+              maxLength={3}
+              className="inline-editable"
+              title="Statement currency — transactions imported for this card are converted to CAD using the Bank of Canada's daily rate"
+              style={{
+                width: 40,
+                background: "transparent",
+                fontFamily: "var(--mono)",
+                fontSize: 12,
+                fontWeight: 600,
+                color: "var(--muted)",
+                padding: "5px 6px",
+                borderRadius: 6,
+                textAlign: "center",
+                textTransform: "uppercase",
               }}
             />
             {/* The network toggle is driven by props, so a failed save

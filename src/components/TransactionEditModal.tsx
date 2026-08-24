@@ -13,6 +13,7 @@ export interface TransactionEditPatch {
   type: TxnType;
   reimbursedAmount: number | null;
   excludeFromDashboard: boolean;
+  conversionNote: string;
   parentId?: string;
   newParentName?: string;
   category?: string;
@@ -42,6 +43,7 @@ export function TransactionEditModal({
   const [amount, setAmount] = useState(txn.amount.toFixed(2));
   const [reimbursed, setReimbursed] = useState(txn.reimbursedAmount != null ? txn.reimbursedAmount.toFixed(2) : "");
   const [excludeFromDashboard, setExcludeFromDashboard] = useState(!!txn.excludeFromDashboard);
+  const [conversionNote, setConversionNote] = useState(txn.conversionNote ?? "");
   const [vendorMode, setVendorMode] = useState<"existing" | "new">("existing");
   const [selectedParentId, setSelectedParentId] = useState(currentParentId ?? "");
   const [newVendorName, setNewVendorName] = useState(currentVendorName || cleanVendorName(txn.rawDescription));
@@ -80,6 +82,7 @@ export function TransactionEditModal({
       type,
       reimbursedAmount: parsedReimbursed,
       excludeFromDashboard,
+      conversionNote,
     };
     if (vendorMode === "new") {
       patch.newParentName = newVendorName.trim();
@@ -246,6 +249,17 @@ export function TransactionEditModal({
                 </button>
               </div>
             )}
+          </div>
+
+          <div>
+            <div style={labelStyle}>Conversion Notes (optional)</div>
+            <textarea
+              value={conversionNote}
+              onChange={(e) => setConversionNote(e.target.value)}
+              placeholder="e.g. original amount and exchange rate for a foreign-currency purchase"
+              rows={2}
+              style={{ ...inputStyle, width: "100%", boxSizing: "border-box", fontFamily: "inherit", resize: "vertical" }}
+            />
           </div>
 
           <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12.5, color: "var(--muted)", cursor: "pointer" }}>

@@ -16,12 +16,18 @@ export function fetchState(): Promise<AppState> {
   return request("/api/state");
 }
 
-export function addCard(input: { name: string; bank: string; last4: string; network: Network }): Promise<Card> {
+export function addCard(input: { name: string; bank: string; last4: string; network: Network; currency?: string }): Promise<Card> {
   return request("/api/cards", { method: "POST", body: JSON.stringify(input) });
 }
 
-export function updateCard(id: string, patch: Partial<Pick<Card, "name" | "bank" | "network">>): Promise<Card> {
+export function updateCard(id: string, patch: Partial<Pick<Card, "name" | "bank" | "network" | "currency">>): Promise<Card> {
   return request(`/api/cards/${id}`, { method: "PATCH", body: JSON.stringify(patch) });
+}
+
+// CAD per 1 unit of `currency`, resolved for every date in [start, end] —
+// see src/app/api/fx-rates/route.ts and src/lib/fx.ts.
+export function fetchFxRates(currency: string, start: string, end: string): Promise<{ rates: Record<string, number> }> {
+  return request(`/api/fx-rates?currency=${encodeURIComponent(currency)}&start=${start}&end=${end}`);
 }
 
 export function addCategory(input: { name: string; color: string }): Promise<Category> {
@@ -57,6 +63,8 @@ export interface ImportRow {
   // Resubmit a DuplicateRow with this set to add it despite colliding with
   // an existing transaction (or another row in the same batch).
   forceImport?: boolean;
+  // See Transaction.conversionNote.
+  conversionNote?: string;
 }
 
 export interface DuplicateRow {
@@ -67,6 +75,7 @@ export interface DuplicateRow {
   vendorOverride?: string;
   categoryText?: string;
   typeText?: string;
+  conversionNote?: string;
 }
 
 export function importTransactions(
@@ -82,7 +91,7 @@ export function importTransactions(
 
 export function updateTransaction(
   id: string,
-  patch: Partial<Pick<Transaction, "type" | "needsReview" | "childVendorId" | "date" | "amount" | "excludeFromDashboard">> & {
+  patch: Partial<Pick<Transaction, "type" | "needsReview" | "childVendorId" | "date" | "amount" | "excludeFromDashboard" | "conversionNote">> & {
     parentId?: string;
     newParentName?: string;
     category?: string;

@@ -163,6 +163,46 @@ describe("POST /api/transactions/import", () => {
     expect(state.transactions).toHaveLength(1);
   });
 
+  it("stores a conversion note on the created transaction, trimmed", async () => {
+    const card = makeCard();
+    await writeState(makeAppState({ cards: [card] }));
+
+    const res = await importRows(card.id, [
+      { date: "2026-03-05", rawDescription: "Foreign Vendor", amount: 73.84, isCharge: true, conversionNote: "  Converted from 1000.00 MXN at 0.07384 (Bank of Canada rate, 2026-03-05).  " },
+    ]);
+
+    expect(res.status).toBe(201);
+    const body = await res.json();
+    expect(body.transactions[0].conversionNote).toBe("Converted from 1000.00 MXN at 0.07384 (Bank of Canada rate, 2026-03-05).");
+  });
+
+  it("leaves conversionNote unset when the row doesn't have one", async () => {
+    const card = makeCard();
+    await writeState(makeAppState({ cards: [card] }));
+
+    const res = await importRows(card.id, [{ date: "2026-03-05", rawDescription: "Regular CAD purchase", amount: 10, isCharge: true }]);
+
+    expect((await res.json()).transactions[0].conversionNote).toBeUndefined();
+  });
+
+  it("carries the conversion note through on a duplicate-row echo", async () => {
+    const card = makeCard();
+    await writeState(makeAppState({ cards: [card] }));
+    const row = {
+      date: "2026-03-05",
+      rawDescription: "Foreign Vendor",
+      amount: 73.84,
+      isCharge: true,
+      conversionNote: "Converted from 1000.00 MXN at 0.07384 (Bank of Canada rate, 2026-03-05).",
+    };
+    await importRows(card.id, [row]);
+
+    const res = await importRows(card.id, [row]);
+
+    const duplicate = (await res.json()).duplicates[0];
+    expect(duplicate.conversionNote).toBe(row.conversionNote);
+  });
+
   it("skips a row that duplicates another row earlier in the same batch", async () => {
     const card = makeCard();
     await writeState(makeAppState({ cards: [card] }));

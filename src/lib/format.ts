@@ -1,6 +1,11 @@
+// Every amount in the store is CAD today (the base/display currency — see
+// the multi-currency branch for cards that import in a different one).
+// en-CA is deliberate, not just en-US with the currency swapped: en-US
+// would format CAD with a "CA$" prefix to disambiguate from its own local
+// dollar, and every amount in this app already renders as a plain "$".
 export function fmtCurrency(n: number | null | undefined): string {
   if (n == null || isNaN(n)) return "$0.00";
-  return n.toLocaleString("en-US", { style: "currency", currency: "USD" });
+  return n.toLocaleString("en-CA", { style: "currency", currency: "CAD" });
 }
 
 export function fmtCurrencyShort(n: number | null | undefined): string {
@@ -18,7 +23,7 @@ export function fmtCurrencyShort(n: number | null | undefined): string {
 // matters more than compactness (e.g. chart bar labels).
 export function fmtCurrencyWhole(n: number | null | undefined): string {
   if (n == null || isNaN(n)) return "$0";
-  return n.toLocaleString("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 });
+  return n.toLocaleString("en-CA", { style: "currency", currency: "CAD", maximumFractionDigits: 0 });
 }
 
 export function fmtDateShort(iso: string | null | undefined): string {

@@ -13,6 +13,12 @@ export interface Card {
   network: Network;
   last4: string;
   color: string;
+  // ISO 4217 code (e.g. "USD", "MXN"). Absent/undefined means CAD — the
+  // store's base/display currency, matching what fmtCurrency renders and
+  // what every existing card's statements were already in. A non-CAD card
+  // is converted to CAD per-transaction at import time (see
+  // src/lib/fx.ts) — the store never holds a mix of currencies.
+  currency?: string;
 }
 
 export interface Category {
@@ -90,6 +96,13 @@ export interface Transaction {
   // Always <= amount; partial reimbursement is expected (see
   // netAmountForTransaction in vendors.ts).
   reimbursedAmount?: number;
+  // Free-text, e.g. auto-filled at import time for a foreign-currency card
+  // with the original amount/currency and the Bank of Canada rate used to
+  // convert it to the CAD `amount` above (see ImportWizard's FX
+  // conversion) — the store never keeps the original amount as its own
+  // field, only this note. Shown on the transaction (Edit modal) but never
+  // on the Transactions list.
+  conversionNote?: string;
   // Same idea as Category.excludeFromDashboard, but scoped to one
   // transaction instead of every transaction under a category — for a
   // one-off outlier (e.g. a single large purchase) that shouldn't skew

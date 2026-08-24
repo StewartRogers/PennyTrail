@@ -194,6 +194,14 @@ export function parseDateFlexible(str: unknown, format: string): string | null {
     y = +match[1];
     m = +match[2];
     d = +match[3];
+  } else if (format === "YYYY-MM-DD HH:MM:SS") {
+    // Only the date portion matters — whatever time-of-day, seconds
+    // precision, or "T" vs space separator follows is discarded.
+    const match = /^(\d{4})-(\d{2})-(\d{2})[ T]/.exec(s);
+    if (!match) return null;
+    y = +match[1];
+    m = +match[2];
+    d = +match[3];
   } else if (format === "YYYY-MM-DD") {
     const p = s.split(/[-/]/);
     y = +p[0];

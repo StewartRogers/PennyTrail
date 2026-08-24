@@ -6,8 +6,9 @@ import { ToastProvider } from "@/components/ToastContext";
 import type { AppState, Template } from "@/lib/types";
 import { makeAppState, makeCard } from "../helpers/fixtures";
 
-const { importTransactionsMock } = vi.hoisted(() => ({
+const { importTransactionsMock, fetchFxRatesMock } = vi.hoisted(() => ({
   importTransactionsMock: vi.fn(),
+  fetchFxRatesMock: vi.fn(),
 }));
 
 vi.mock("@/lib/api", () => ({
@@ -23,6 +24,7 @@ vi.mock("@/lib/api", () => ({
   }),
   importTransactions: importTransactionsMock,
   updateTransaction: vi.fn(),
+  fetchFxRates: fetchFxRatesMock,
 }));
 
 function renderWizard(appState: AppState, onReload = vi.fn().mockResolvedValue(undefined)) {
@@ -193,5 +195,81 @@ describe("ImportWizard", () => {
     await waitFor(() => expect(importTransactionsMock).toHaveBeenCalled());
     const rows = importTransactionsMock.mock.calls[0][1];
     expect(rows[0].rawDescription).toBe("CashBack / Remises");
+  });
+});
+
+describe("ImportWizard foreign-currency conversion", () => {
+  async function uploadAndSelectDateFormat(card: ReturnType<typeof makeCard>, appState: AppState, csv: string) {
+    renderWizard(appState);
+    fireEvent.change(screen.getByRole("combobox"), { target: { value: card.id } });
+    fireEvent.click(screen.getByText("Continue →"));
+
+    const fileInput = document.querySelector('input[type="file"]') as HTMLInputElement;
+    fireEvent.change(fileInput, { target: { files: [makeCsvFile(csv)] } });
+    await waitFor(() => expect(screen.getByText(/rows detected/)).toBeInTheDocument());
+    fireEvent.change(screen.getByDisplayValue("MM/DD/YYYY"), { target: { value: "YYYY-MM-DD" } });
+  }
+
+  it("does not fetch exchange rates for a plain CAD card", async () => {
+    const card = makeCard({ name: "My Card" });
+    await uploadAndSelectDateFormat(card, makeAppState({ cards: [card] }), "Date,Description,Amount\n2026-03-05,Test Vendor,100\n");
+
+    expect(fetchFxRatesMock).not.toHaveBeenCalled();
+    expect(screen.getByText("Continue →").closest("button")).not.toBeDisabled();
+  });
+
+  it("converts amounts using the fetched rate before showing the Confirm preview", async () => {
+    fetchFxRatesMock.mockResolvedValue({ rates: { "2026-03-05": 0.5 } });
+    const card = makeCard({ name: "MXN Card", currency: "MXN" });
+    await uploadAndSelectDateFormat(card, makeAppState({ cards: [card] }), "Date,Description,Amount\n2026-03-05,Test Vendor,100\n");
+
+    expect(await screen.findByText(/Converting from MXN to CAD/)).toBeInTheDocument();
+    expect(fetchFxRatesMock).toHaveBeenCalledWith("MXN", "2026-03-05", "2026-03-05");
+
+    fireEvent.click(screen.getByText("Continue →"));
+
+    // 100 MXN * 0.5 = $50.00 CAD, not the raw 100.
+    expect(await screen.findByText("$50.00")).toBeInTheDocument();
+  });
+
+  it("records the original amount and rate in a conversion note on the submitted row", async () => {
+    fetchFxRatesMock.mockResolvedValue({ rates: { "2026-03-05": 0.5 } });
+    const card = makeCard({ name: "MXN Card", currency: "MXN" });
+    await uploadAndSelectDateFormat(card, makeAppState({ cards: [card] }), "Date,Description,Amount\n2026-03-05,Test Vendor,100\n");
+
+    await screen.findByText(/Converting from MXN to CAD/);
+    fireEvent.click(screen.getByText("Continue →"));
+    fireEvent.click(await screen.findByText("Import 1 Transactions"));
+
+    await waitFor(() => expect(importTransactionsMock).toHaveBeenCalled());
+    const rows = importTransactionsMock.mock.calls[0][1];
+    expect(rows[0].conversionNote).toBe("Converted from 100.00 MXN at 0.5 (Bank of Canada rate, 2026-03-05).");
+  });
+
+  it("blocks Continue while the exchange rate fetch is in flight", async () => {
+    let resolveFetch!: (v: { rates: Record<string, number> }) => void;
+    fetchFxRatesMock.mockReturnValue(new Promise((resolve) => (resolveFetch = resolve)));
+    const card = makeCard({ name: "MXN Card", currency: "MXN" });
+    await uploadAndSelectDateFormat(card, makeAppState({ cards: [card] }), "Date,Description,Amount\n2026-03-05,Test Vendor,100\n");
+
+    expect(await screen.findByText(/Fetching MXN→CAD exchange rates/)).toBeInTheDocument();
+    expect(screen.getByText("Continue →").closest("button")).toBeDisabled();
+
+    resolveFetch({ rates: { "2026-03-05": 0.5 } });
+    await waitFor(() => expect(screen.getByText("Continue →").closest("button")).not.toBeDisabled());
+  });
+
+  it("shows a retry option and blocks Continue when the exchange rate fetch fails", async () => {
+    fetchFxRatesMock.mockRejectedValueOnce(new Error("No Bank of Canada exchange rate series for MXN"));
+    const card = makeCard({ name: "MXN Card", currency: "MXN" });
+    await uploadAndSelectDateFormat(card, makeAppState({ cards: [card] }), "Date,Description,Amount\n2026-03-05,Test Vendor,100\n");
+
+    expect(await screen.findByText("No Bank of Canada exchange rate series for MXN")).toBeInTheDocument();
+    expect(screen.getByText("Continue →").closest("button")).toBeDisabled();
+
+    fetchFxRatesMock.mockResolvedValueOnce({ rates: { "2026-03-05": 0.5 } });
+    fireEvent.click(screen.getByText("Retry"));
+
+    await waitFor(() => expect(screen.getByText("Continue →").closest("button")).not.toBeDisabled());
   });
 });
