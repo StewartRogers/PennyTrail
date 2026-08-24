@@ -36,6 +36,21 @@ describe("POST /api/cards", () => {
     const res = await POST(jsonRequest("http://test/api/cards", "POST", { bank: "Simplii" }));
     expect(res.status).toBe(400);
   });
+
+  it("defaults to CAD when no currency is given", async () => {
+    const card = await createCard();
+    expect(card.currency).toBe("CAD");
+  });
+
+  it("uppercases a valid 3-letter currency code", async () => {
+    const card = await createCard({ currency: "mxn" });
+    expect(card.currency).toBe("MXN");
+  });
+
+  it("falls back to CAD for a currency that isn't a 3-letter code, rather than rejecting the card", async () => {
+    const card = await createCard({ currency: "Mexican Pesos" });
+    expect(card.currency).toBe("CAD");
+  });
 });
 
 describe("PATCH /api/cards/[id]", () => {
@@ -67,5 +82,25 @@ describe("PATCH /api/cards/[id]", () => {
       params: Promise.resolve({ id: "missing" }),
     });
     expect(res.status).toBe(404);
+  });
+
+  it("updates the currency, uppercasing it", async () => {
+    const card = await createCard();
+    const res = await PATCH(jsonRequest(`http://test/api/cards/${card.id}`, "PATCH", { currency: "usd" }), {
+      params: Promise.resolve({ id: card.id }),
+    });
+    expect(res.status).toBe(200);
+    expect((await res.json()).currency).toBe("USD");
+  });
+
+  it("ignores an invalid currency instead of rejecting the whole request", async () => {
+    const card = await createCard({ currency: "USD" });
+    const res = await PATCH(jsonRequest(`http://test/api/cards/${card.id}`, "PATCH", { name: "Renamed", currency: "US Dollars" }), {
+      params: Promise.resolve({ id: card.id }),
+    });
+    expect(res.status).toBe(200);
+    const updated = await res.json();
+    expect(updated.name).toBe("Renamed");
+    expect(updated.currency).toBe("USD");
   });
 });

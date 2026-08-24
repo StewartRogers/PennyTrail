@@ -254,6 +254,38 @@ describe("PATCH /api/transactions/[id]", () => {
     expect(state.transactions[0].excludeFromDashboard).toBeUndefined();
   });
 
+  it("sets and trims a conversion note", async () => {
+    const txn = makeTransaction();
+    await writeState(makeAppState({ transactions: [txn] }));
+
+    const res = await patchTxn(txn.id, { conversionNote: "  Converted from 1000.00 MXN at 0.0735  " });
+
+    expect(res.status).toBe(200);
+    expect((await res.json()).conversionNote).toBe("Converted from 1000.00 MXN at 0.0735");
+  });
+
+  it("clears a conversion note when set to an empty string", async () => {
+    const txn = makeTransaction({ conversionNote: "Converted from 1000.00 MXN at 0.0735" });
+    await writeState(makeAppState({ transactions: [txn] }));
+
+    const res = await patchTxn(txn.id, { conversionNote: "   " });
+
+    expect(res.status).toBe(200);
+    const state = await readState();
+    expect(state.transactions[0].conversionNote).toBeUndefined();
+  });
+
+  it("rejects an over-long conversion note without changing the transaction", async () => {
+    const txn = makeTransaction();
+    await writeState(makeAppState({ transactions: [txn] }));
+
+    const res = await patchTxn(txn.id, { conversionNote: "x".repeat(201) });
+
+    expect(res.status).toBe(400);
+    const state = await readState();
+    expect(state.transactions[0].conversionNote).toBeUndefined();
+  });
+
   it("sets a partial reimbursed amount", async () => {
     const txn = makeTransaction({ amount: 100 });
     await writeState(makeAppState({ transactions: [txn] }));

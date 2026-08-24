@@ -23,6 +23,9 @@ export async function PATCH(request: Request, ctx: RouteContext<"/api/transactio
   if (typeof body.newParentName === "string" && body.newParentName.trim().length > MAX_NAME_LENGTH) {
     return NextResponse.json({ error: "Vendor name is too long" }, { status: 400 });
   }
+  if (typeof body.conversionNote === "string" && body.conversionNote.trim().length > MAX_NAME_LENGTH) {
+    return NextResponse.json({ error: "Conversion note is too long" }, { status: 400 });
+  }
 
   const { result } = await updateState((state) => {
     const txn = state.transactions.find((t) => t.id === id);
@@ -114,6 +117,11 @@ export async function PATCH(request: Request, ctx: RouteContext<"/api/transactio
 
     if (typeof body.needsReview === "boolean") txn.needsReview = body.needsReview;
     if (typeof body.excludeFromDashboard === "boolean") txn.excludeFromDashboard = body.excludeFromDashboard;
+    if (typeof body.conversionNote === "string") {
+      const trimmed = body.conversionNote.trim();
+      if (trimmed) txn.conversionNote = trimmed;
+      else delete txn.conversionNote;
+    }
 
     if (body.reimbursedAmount !== undefined) {
       if (body.reimbursedAmount === null) {
