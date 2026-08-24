@@ -138,6 +138,23 @@ describe("parseDateFlexible", () => {
   it("rejects an out-of-range day for Month DD, YYYY", () => {
     expect(parseDateFlexible("Feb 30, 2026", "Month DD, YYYY")).toBeNull();
   });
+
+  it("parses YYYYMMDD", () => {
+    expect(parseDateFlexible("20260813", "YYYYMMDD")).toBe("2026-08-13");
+  });
+
+  it("rejects YYYYMMDD with the wrong number of digits", () => {
+    expect(parseDateFlexible("2026813", "YYYYMMDD")).toBeNull();
+    expect(parseDateFlexible("202608130", "YYYYMMDD")).toBeNull();
+  });
+
+  it("rejects an out-of-range month for YYYYMMDD", () => {
+    expect(parseDateFlexible("20261301", "YYYYMMDD")).toBeNull();
+  });
+
+  it("rejects a calendar-impossible day for YYYYMMDD", () => {
+    expect(parseDateFlexible("20260230", "YYYYMMDD")).toBeNull();
+  });
 });
 
 describe("guessMapping", () => {

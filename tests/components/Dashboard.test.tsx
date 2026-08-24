@@ -276,6 +276,47 @@ describe("Dashboard top merchants", () => {
   });
 });
 
+describe("Dashboard spending by card", () => {
+  it("ranks cards by spend and counts their transactions", () => {
+    renderDashboard();
+
+    const cards = within(panel("Spending by Card"));
+    // Card A: t1 (100) + t2 (net 30) + t7 (999) = 1129, over 3 purchases.
+    expect(cards.getByText("Card A")).toBeInTheDocument();
+    expect(cards.getByText("Test Bank · 3 txns")).toBeInTheDocument();
+    expect(cards.getByText("$1,129.00")).toBeInTheDocument();
+    // Card B: t3 (60) only.
+    expect(cards.getByText("Card B")).toBeInTheDocument();
+    expect(cards.getByText("Test Bank · 1 txns")).toBeInTheDocument();
+    expect(cards.getByText("$60.00")).toBeInTheDocument();
+  });
+
+  it("respects the same 12mo/All-cards filters as the rest of the page", () => {
+    renderDashboard();
+
+    // t8 ($777, card_a) is before the default 12mo cutoff — same reasoning
+    // as the KPI and trend tests above.
+    expect(within(panel("Spending by Card")).queryByText("$1,906.00")).toBeNull(); // 1129 + 777
+
+    fireEvent.click(screen.getByRole("button", { name: "All" }));
+
+    expect(within(panel("Spending by Card")).getByText("$1,906.00")).toBeInTheDocument();
+  });
+
+  it("passes the matching purchases to the drill-down handler", () => {
+    const { onDrillDown } = renderDashboard();
+
+    fireEvent.click(within(panel("Spending by Card")).getByText("Card A"));
+
+    expect(onDrillDown).toHaveBeenCalledTimes(1);
+    const arg = onDrillDown.mock.calls[0][0];
+    expect(arg.title).toBe("Card A");
+    expect(arg.subtitle).toBe("3 purchases");
+    expect(arg.transactions.map((t: { id: string }) => t.id).sort()).toEqual(["t1", "t2", "t7"]);
+    expect(arg.viewAllFilter).toEqual({ cardFilter: "card_a" });
+  });
+});
+
 describe("Dashboard transaction-level exclusion", () => {
   function buildExclusionState(): AppState {
     return makeAppState({

@@ -188,6 +188,12 @@ export function parseDateFlexible(str: unknown, format: string): string | null {
     m = MONTH_NAMES[match[1].toLowerCase()] ?? NaN;
     d = +match[2];
     y = +match[3];
+  } else if (format === "YYYYMMDD") {
+    const match = /^(\d{4})(\d{2})(\d{2})$/.exec(s);
+    if (!match) return null;
+    y = +match[1];
+    m = +match[2];
+    d = +match[3];
   } else if (format === "YYYY-MM-DD") {
     const p = s.split(/[-/]/);
     y = +p[0];

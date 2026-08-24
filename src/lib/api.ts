@@ -104,10 +104,13 @@ export function deleteTransactions(ids: string[]): Promise<{ deletedCount: numbe
   return request("/api/transactions", { method: "DELETE", body: JSON.stringify({ ids }) });
 }
 
-// There is no standalone "create a parent" — a parent is only ever created
-// together with its first vendor, either during import review (see
-// updateTransaction's newParentName/category) or automatically via fuzzy
-// matching. A parent with zero vendors can't exist.
+// A parent can also come from naming a transaction's vendor directly (see
+// updateTransaction's newParentName/category) or from fuzzy-match
+// auto-attach — this is the standalone path, e.g. to pre-create a grouping
+// before moving existing vendors into it from the Vendors tab.
+export function addParentVendor(input: { name: string; category: string }): Promise<ParentVendor> {
+  return request("/api/parent-vendors", { method: "POST", body: JSON.stringify(input) });
+}
 
 export function updateParentVendor(id: string, patch: { name?: string; category?: string }): Promise<ParentVendor> {
   return request(`/api/parent-vendors/${id}`, { method: "PATCH", body: JSON.stringify(patch) });

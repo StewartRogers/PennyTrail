@@ -1,12 +1,14 @@
 /** @vitest-environment jsdom */
 import { describe, expect, it, vi, beforeEach } from "vitest";
-import { render, screen, fireEvent } from "@testing-library/react";
+import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { VendorMappings } from "@/components/VendorMappings";
 import { ToastProvider } from "@/components/ToastContext";
+import { addParentVendor } from "@/lib/api";
 import type { AppState } from "@/lib/types";
 import { makeAppState, makeCategory, makeChildVendor, makeParentVendor } from "../helpers/fixtures";
 
 vi.mock("@/lib/api", () => ({
+  addParentVendor: vi.fn(),
   deleteChildVendor: vi.fn(),
   deleteParentVendor: vi.fn(),
   mergeParentVendors: vi.fn(),
@@ -116,8 +118,55 @@ describe("VendorMappings row navigation", () => {
 
     renderVendorMappings(appState, undefined, onNavigateToTransactions);
     fireEvent.click(screen.getByDisplayValue("Parent 0")); // the inline rename input
-    fireEvent.click(screen.getByRole("combobox")); // the category select
+    fireEvent.click(screen.getAllByRole("combobox")[0]); // the row's category select, not the "+ Add a parent" one
 
     expect(onNavigateToTransactions).not.toHaveBeenCalled();
+  });
+});
+
+describe("VendorMappings add parent", () => {
+  it("disables Add until both a name and a category are chosen", () => {
+    const category = makeCategory();
+    const appState = makeAppState({ categories: [category], parentVendors: [], childVendors: [] });
+
+    renderVendorMappings(appState);
+
+    expect(screen.getByText("Add").closest("button")).toBeDisabled();
+
+    fireEvent.change(screen.getByPlaceholderText("Parent name"), { target: { value: "New Grouping" } });
+    expect(screen.getByText("Add").closest("button")).toBeDisabled();
+
+    fireEvent.change(screen.getByDisplayValue("— Choose a category —"), { target: { value: category.id } });
+    expect(screen.getByText("Add").closest("button")).not.toBeDisabled();
+  });
+
+  it("creates a standalone parent with the entered name and category, then reloads", async () => {
+    const category = makeCategory({ id: "cat_1", name: "Groceries" });
+    const appState = makeAppState({ categories: [category], parentVendors: [], childVendors: [] });
+    const onReload = vi.fn().mockResolvedValue(undefined);
+    vi.mocked(addParentVendor).mockResolvedValue({ id: "vnd_new", name: "New Grouping", category: "cat_1" });
+
+    renderVendorMappings(appState, onReload);
+
+    fireEvent.change(screen.getByPlaceholderText("Parent name"), { target: { value: "New Grouping" } });
+    fireEvent.change(screen.getByDisplayValue("— Choose a category —"), { target: { value: "cat_1" } });
+    fireEvent.click(screen.getByText("Add"));
+
+    await waitFor(() => expect(addParentVendor).toHaveBeenCalledWith({ name: "New Grouping", category: "cat_1" }));
+    expect(onReload).toHaveBeenCalled();
+  });
+
+  it("shows a toast instead of an unhandled rejection when the name is already taken", async () => {
+    const category = makeCategory({ id: "cat_1" });
+    const appState = makeAppState({ categories: [category], parentVendors: [], childVendors: [] });
+    vi.mocked(addParentVendor).mockRejectedValue(new Error("A parent with this name already exists"));
+
+    renderVendorMappings(appState);
+
+    fireEvent.change(screen.getByPlaceholderText("Parent name"), { target: { value: "Costco" } });
+    fireEvent.change(screen.getByDisplayValue("— Choose a category —"), { target: { value: "cat_1" } });
+    fireEvent.click(screen.getByText("Add"));
+
+    expect(await screen.findByText("A parent with this name already exists")).toBeInTheDocument();
   });
 });

@@ -2,10 +2,10 @@
 
 import { useMemo, useState } from "react";
 import type { AppState } from "@/lib/types";
-import { deleteChildVendor, deleteParentVendor, mergeParentVendors, moveChildVendor, updateParentVendor } from "@/lib/api";
+import { addParentVendor, deleteChildVendor, deleteParentVendor, mergeParentVendors, moveChildVendor, updateParentVendor } from "@/lib/api";
 import { sortCategoriesByName } from "@/lib/categories";
 import { parentIdForTransaction } from "@/lib/vendors";
-import { PageTitle, ColorDot, inputStyle, SegmentedControl } from "./ui";
+import { PageTitle, ColorDot, inputStyle, PrimaryButton, SegmentedControl } from "./ui";
 import { useToast } from "./ToastContext";
 import type { TxnFilterSeed } from "./Transactions";
 
@@ -35,6 +35,8 @@ export function VendorMappings({
   // alphabetical list. Hold the chosen target until it's confirmed.
   const [pendingMerge, setPendingMerge] = useState<{ fromId: string; fromName: string; intoId: string; intoName: string } | null>(null);
   const [movingChildId, setMovingChildId] = useState<string | null>(null);
+  const [newParentName, setNewParentName] = useState("");
+  const [newParentCategory, setNewParentCategory] = useState("");
 
   const categoryById = useMemo(() => new Map(appState.categories.map((c) => [c.id, c])), [appState.categories]);
   const sortedCategories = useMemo(() => sortCategoriesByName(appState.categories), [appState.categories]);
@@ -146,6 +148,20 @@ export function VendorMappings({
       setMovingChildId(null);
     } catch (err) {
       pushToast(err instanceof Error ? err.message : "Failed to move vendor");
+    }
+  }
+
+  async function handleAddParent() {
+    const name = newParentName.trim();
+    if (!name || !newParentCategory) return;
+    try {
+      await addParentVendor({ name, category: newParentCategory });
+      setNewParentName("");
+      setNewParentCategory("");
+      await onReload();
+      pushToast(`Added parent "${name}"`);
+    } catch (err) {
+      pushToast(err instanceof Error ? err.message : "Failed to add parent");
     }
   }
 
@@ -328,6 +344,33 @@ export function VendorMappings({
               })}
             </div>
           )}
+
+          <div style={{ border: "1px dashed var(--border)", borderRadius: 10, padding: "14px 16px", maxWidth: 480, marginTop: 18 }}>
+            <div style={{ fontSize: 12.5, fontWeight: 600, color: "var(--muted)", marginBottom: 10 }}>+ Add a parent</div>
+            <div style={{ fontSize: 12, color: "var(--muted)", marginBottom: 10 }}>
+              Creates an empty parent with no vendors yet — use the Vendors tab&apos;s &ldquo;Change this vendor&apos;s
+              parent&rdquo; control to move existing vendors into it.
+            </div>
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+              <input
+                value={newParentName}
+                onChange={(e) => setNewParentName(e.target.value)}
+                placeholder="Parent name"
+                style={{ ...inputStyle, flex: 1, minWidth: 160 }}
+              />
+              <select value={newParentCategory} onChange={(e) => setNewParentCategory(e.target.value)} style={{ ...inputStyle, minWidth: 160 }}>
+                <option value="">— Choose a category —</option>
+                {sortedCategories.map((c) => (
+                  <option key={c.id} value={c.id}>
+                    {c.name}
+                  </option>
+                ))}
+              </select>
+              <PrimaryButton onClick={handleAddParent} disabled={!newParentName.trim() || !newParentCategory}>
+                Add
+              </PrimaryButton>
+            </div>
+          </div>
         </>
       )}
 

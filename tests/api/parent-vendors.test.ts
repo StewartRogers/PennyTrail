@@ -8,6 +8,7 @@ setupScratchDataDir();
 let PATCH: typeof import("@/app/api/parent-vendors/[id]/route").PATCH;
 let DELETE: typeof import("@/app/api/parent-vendors/[id]/route").DELETE;
 let MERGE: typeof import("@/app/api/parent-vendors/merge/route").POST;
+let POST: typeof import("@/app/api/parent-vendors/route").POST;
 let readState: typeof import("@/lib/store").readState;
 let updateState: typeof import("@/lib/store").updateState;
 let categoryIdForTransaction: typeof import("@/lib/vendors").categoryIdForTransaction;
@@ -15,6 +16,7 @@ let categoryIdForTransaction: typeof import("@/lib/vendors").categoryIdForTransa
 beforeEach(async () => {
   ({ PATCH, DELETE } = await import("@/app/api/parent-vendors/[id]/route"));
   ({ POST: MERGE } = await import("@/app/api/parent-vendors/merge/route"));
+  ({ POST } = await import("@/app/api/parent-vendors/route"));
   ({ readState, updateState } = await import("@/lib/store"));
   ({ categoryIdForTransaction } = await import("@/lib/vendors"));
 });
@@ -56,6 +58,75 @@ function derivedCategory(state: AppState, txnId: string): string | null {
   const txn = state.transactions.find((t) => t.id === txnId)!;
   return categoryIdForTransaction(txn, childById, parentById);
 }
+
+describe("POST /api/parent-vendors", () => {
+  it("creates a standalone parent with no vendors", async () => {
+    await seed();
+
+    const res = await POST(jsonRequest("http://test/api/parent-vendors", "POST", { name: "New Grouping", category: "cat_travel" }));
+
+    expect(res.status).toBe(201);
+    const created = await res.json();
+    expect(created.name).toBe("New Grouping");
+    expect(created.category).toBe("cat_travel");
+    expect(created.id).toMatch(/^vnd_/);
+
+    const state = await readState();
+    expect(state.parentVendors).toHaveLength(3);
+    expect(state.childVendors.filter((c) => c.parentId === created.id)).toHaveLength(0);
+  });
+
+  it("trims whitespace from the name", async () => {
+    await seed();
+
+    const res = await POST(jsonRequest("http://test/api/parent-vendors", "POST", { name: "  Padded  ", category: "cat_travel" }));
+
+    expect((await res.json()).name).toBe("Padded");
+  });
+
+  it.each([
+    ["a missing name", { category: "cat_travel" }],
+    ["a whitespace-only name", { name: "   ", category: "cat_travel" }],
+    ["a missing category", { name: "New Grouping" }],
+    ["a null body", null],
+  ])("rejects %s", async (_label, body) => {
+    await seed();
+
+    const res = await POST(jsonRequest("http://test/api/parent-vendors", "POST", body));
+
+    expect(res.status).toBe(400);
+    const state = await readState();
+    expect(state.parentVendors).toHaveLength(2);
+  });
+
+  it("rejects an unknown category", async () => {
+    await seed();
+
+    const res = await POST(jsonRequest("http://test/api/parent-vendors", "POST", { name: "New Grouping", category: "cat_nope" }));
+
+    expect(res.status).toBe(400);
+    const state = await readState();
+    expect(state.parentVendors).toHaveLength(2);
+  });
+
+  it("rejects a duplicate name, case-insensitively, without creating anything", async () => {
+    await seed();
+
+    const res = await POST(jsonRequest("http://test/api/parent-vendors", "POST", { name: "  cOsTcO  ", category: "cat_travel" }));
+
+    expect(res.status).toBe(409);
+    const state = await readState();
+    expect(state.parentVendors).toHaveLength(2);
+  });
+
+  it("rejects an over-long name", async () => {
+    await seed();
+
+    const res = await POST(jsonRequest("http://test/api/parent-vendors", "POST", { name: "x".repeat(201), category: "cat_travel" }));
+
+    expect(res.status).toBe(400);
+  });
+});
 
 describe("PATCH /api/parent-vendors/[id]", () => {
   it("renames a parent", async () => {

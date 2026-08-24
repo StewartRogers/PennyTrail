@@ -11,7 +11,7 @@ import { PrimaryButton, SecondaryButton, Pill, inputStyle, labelStyle } from "./
 import { useToast } from "./ToastContext";
 import type { Transaction } from "@/lib/types";
 
-type DateFormat = "MM/DD/YYYY" | "DD/MM/YYYY" | "YYYY-MM-DD" | "Month DD, YYYY";
+type DateFormat = "MM/DD/YYYY" | "DD/MM/YYYY" | "YYYY-MM-DD" | "Month DD, YYYY" | "YYYYMMDD";
 
 interface Mapping {
   dateCol: number;
@@ -869,6 +869,7 @@ export function ImportWizard({
                             <option value="DD/MM/YYYY">DD/MM/YYYY</option>
                             <option value="YYYY-MM-DD">YYYY-MM-DD</option>
                             <option value="Month DD, YYYY">Month DD, YYYY</option>
+                            <option value="YYYYMMDD">YYYYMMDD</option>
                           </select>
                         </td>
                       </tr>

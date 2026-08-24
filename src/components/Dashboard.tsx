@@ -70,6 +70,7 @@ export function Dashboard({
   const [breakdownMode, setBreakdownMode] = useState<BreakdownMode>("category");
 
   const categoryById = useMemo(() => new Map(appState.categories.map((c) => [c.id, c])), [appState.categories]);
+  const cardById = useMemo(() => new Map(appState.cards.map((c) => [c.id, c])), [appState.cards]);
   const childById = useMemo(() => new Map(appState.childVendors.map((c) => [c.id, c])), [appState.childVendors]);
   const parentById = useMemo(() => new Map(appState.parentVendors.map((p) => [p.id, p])), [appState.parentVendors]);
   // Categories flagged "Exclude from Dashboards" drop their transactions out
@@ -203,6 +204,26 @@ export function Dashboard({
       .sort((a, b) => b.total - a.total)
       .slice(0, 6);
   }, [purchases, childById, parentById, categoryById]);
+
+  // Same window/filters as everything else on the page (respects both the
+  // card filter and the range preset above) — picking a single card up top
+  // just degrades this to a one-row breakdown, same as Breakdown/Top
+  // Merchants do in that case.
+  const spendingByCard = useMemo(() => {
+    const byCard = new Map<string, { total: number; count: number }>();
+    for (const t of purchases) {
+      const entry = byCard.get(t.cardId) || { total: 0, count: 0 };
+      entry.total += netAmountForTransaction(t);
+      entry.count += 1;
+      byCard.set(t.cardId, entry);
+    }
+    return Array.from(byCard.entries())
+      .map(([cardId, data]) => {
+        const card = cardById.get(cardId);
+        return { cardId, name: card?.name || cardId, bank: card?.bank || "—", total: data.total, count: data.count };
+      })
+      .sort((a, b) => b.total - a.total);
+  }, [purchases, cardById]);
 
   // Trailing 6 full months (dividing by a fixed 6, not "months that had
   // spend") so a category with two $100 months and four $0 months correctly
@@ -415,59 +436,92 @@ export function Dashboard({
         </PanelCard>
       </div>
 
-      <PanelCard style={{ marginTop: 16 }}>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14, flexWrap: "wrap", gap: 10 }}>
-          <SectionTitle>Avg Monthly Spend by Category</SectionTitle>
-          <div style={{ fontSize: 12, color: "var(--muted)" }}>Last 6 full months</div>
-        </div>
-        <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13.5 }}>
-          <thead>
-            <tr>
-              <th style={{ textAlign: "left", padding: "0 10px 8px 0", fontSize: 11.5, fontWeight: 600, color: "var(--muted)", borderBottom: "1px solid var(--border)" }}>
-                Category
-              </th>
-              <th style={{ textAlign: "right", padding: "0 0 8px 10px", fontSize: 11.5, fontWeight: 600, color: "var(--muted)", borderBottom: "1px solid var(--border)" }}>
-                Avg / Month
-              </th>
-              <th style={{ textAlign: "right", padding: "0 0 8px 10px", fontSize: 11.5, fontWeight: 600, color: "var(--muted)", borderBottom: "1px solid var(--border)" }}>
-                Total (6mo)
-              </th>
-            </tr>
-          </thead>
-          <tbody>
-            {avgMonthlyByCategory.map((row) => (
-              <tr
-                key={row.key}
+      <div style={{ display: "flex", gap: 16, marginTop: 16, flexWrap: "wrap" }}>
+        <PanelCard style={{ flex: 1, minWidth: 380 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14, flexWrap: "wrap", gap: 10 }}>
+            <SectionTitle>Avg Monthly Spend by Category</SectionTitle>
+            <div style={{ fontSize: 12, color: "var(--muted)" }}>Last 6 full months</div>
+          </div>
+          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13.5 }}>
+            <thead>
+              <tr>
+                <th style={{ textAlign: "left", padding: "0 10px 8px 0", fontSize: 11.5, fontWeight: 600, color: "var(--muted)", borderBottom: "1px solid var(--border)" }}>
+                  Category
+                </th>
+                <th style={{ textAlign: "right", padding: "0 0 8px 10px", fontSize: 11.5, fontWeight: 600, color: "var(--muted)", borderBottom: "1px solid var(--border)" }}>
+                  Avg / Month
+                </th>
+                <th style={{ textAlign: "right", padding: "0 0 8px 10px", fontSize: 11.5, fontWeight: 600, color: "var(--muted)", borderBottom: "1px solid var(--border)" }}>
+                  Total (6mo)
+                </th>
+              </tr>
+            </thead>
+            <tbody>
+              {avgMonthlyByCategory.map((row) => (
+                <tr
+                  key={row.key}
+                  onClick={() => {
+                    const months = new Set(trailingPeriodKeys("month", 6));
+                    const txns = trendPurchasesFor((t) => categoryIdForTransaction(t, childById, parentById) === row.key && months.has(monthKey(t.date)));
+                    onDrillDown({
+                      title: row.name,
+                      subtitle: `${txns.length} purchases over the last 6 full months`,
+                      transactions: txns,
+                      viewAllFilter: { categoryFilter: row.key },
+                    });
+                  }}
+                  style={{ cursor: "pointer" }}
+                >
+                  <td style={{ padding: "9px 10px 9px 0", borderBottom: "1px solid var(--border)" }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                      <ColorDot color={row.color} />
+                      {row.name}
+                    </div>
+                  </td>
+                  <td style={{ padding: "9px 0 9px 10px", borderBottom: "1px solid var(--border)", textAlign: "right", fontFamily: "var(--mono)", fontWeight: 600 }}>
+                    {fmtCurrency(row.avgPerMonth)}
+                  </td>
+                  <td style={{ padding: "9px 0 9px 10px", borderBottom: "1px solid var(--border)", textAlign: "right", fontFamily: "var(--mono)", color: "var(--muted)" }}>
+                    {fmtCurrency(row.total)}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          {avgMonthlyByCategory.length === 0 && <div style={{ color: "var(--muted)", fontSize: 13, padding: "10px 0" }}>No data yet.</div>}
+        </PanelCard>
+
+        <PanelCard style={{ flex: 1, minWidth: 320 }}>
+          <SectionTitle>Spending by Card</SectionTitle>
+          <div style={{ marginTop: 14 }}>
+            {spendingByCard.map((row, i) => (
+              <div
+                key={row.cardId}
                 onClick={() => {
-                  const months = new Set(trailingPeriodKeys("month", 6));
-                  const txns = trendPurchasesFor((t) => categoryIdForTransaction(t, childById, parentById) === row.key && months.has(monthKey(t.date)));
+                  const txns = purchasesFor((t) => t.cardId === row.cardId);
                   onDrillDown({
                     title: row.name,
-                    subtitle: `${txns.length} purchases over the last 6 full months`,
+                    subtitle: `${txns.length} purchases`,
                     transactions: txns,
-                    viewAllFilter: { categoryFilter: row.key },
+                    viewAllFilter: { cardFilter: row.cardId },
                   });
                 }}
-                style={{ cursor: "pointer" }}
+                style={{ cursor: "pointer", display: "flex", alignItems: "center", gap: 12, padding: "9px 0", borderBottom: "1px solid var(--border)" }}
               >
-                <td style={{ padding: "9px 10px 9px 0", borderBottom: "1px solid var(--border)" }}>
-                  <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                    <ColorDot color={row.color} />
-                    {row.name}
+                <div style={{ fontFamily: "var(--mono)", fontSize: 12, color: "var(--muted)", width: 16 }}>{i + 1}</div>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontSize: 13.5, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{row.name}</div>
+                  <div style={{ fontSize: 11.5, color: "var(--muted)" }}>
+                    {row.bank} · {row.count} txns
                   </div>
-                </td>
-                <td style={{ padding: "9px 0 9px 10px", borderBottom: "1px solid var(--border)", textAlign: "right", fontFamily: "var(--mono)", fontWeight: 600 }}>
-                  {fmtCurrency(row.avgPerMonth)}
-                </td>
-                <td style={{ padding: "9px 0 9px 10px", borderBottom: "1px solid var(--border)", textAlign: "right", fontFamily: "var(--mono)", color: "var(--muted)" }}>
-                  {fmtCurrency(row.total)}
-                </td>
-              </tr>
+                </div>
+                <div style={{ fontFamily: "var(--mono)", fontWeight: 600, fontSize: 13.5 }}>{fmtCurrency(row.total)}</div>
+              </div>
             ))}
-          </tbody>
-        </table>
-        {avgMonthlyByCategory.length === 0 && <div style={{ color: "var(--muted)", fontSize: 13, padding: "10px 0" }}>No data yet.</div>}
-      </PanelCard>
+            {spendingByCard.length === 0 && <div style={{ color: "var(--muted)", fontSize: 13 }}>No data yet.</div>}
+          </div>
+        </PanelCard>
+      </div>
     </div>
   );
 }
