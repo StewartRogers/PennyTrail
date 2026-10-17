@@ -9,7 +9,7 @@ import { fmtCurrency, fmtDateShort } from "@/lib/format";
 import { TYPE_META, sortCategoriesByName } from "@/lib/categories";
 import { PrimaryButton, SecondaryButton, Pill, inputStyle, labelStyle } from "./ui";
 import { useToast } from "./ToastContext";
-import type { Transaction } from "@/lib/types";
+import type { ChildVendor, Transaction } from "@/lib/types";
 
 type DateFormat = "MM/DD/YYYY" | "DD/MM/YYYY" | "YYYY-MM-DD" | "Month DD, YYYY" | "YYYYMMDD" | "YYYY-MM-DD HH:MM:SS";
 
@@ -230,7 +230,6 @@ export function ImportWizard({
   );
   const categoryById = useMemo(() => new Map(appState.categories.map((c) => [c.id, c])), [appState.categories]);
   const parentById = useMemo(() => new Map(appState.parentVendors.map((p) => [p.id, p])), [appState.parentVendors]);
-  const childById = useMemo(() => new Map(appState.childVendors.map((c) => [c.id, c])), [appState.childVendors]);
 
   const matchingTemplates = useMemo(() => {
     if (!selectedCard) return [];
@@ -295,7 +294,11 @@ export function ImportWizard({
       if (rate == null) return { ...r, amount: NaN };
       return {
         ...r,
-        amount: r.amount * rate,
+        // Rounded to the cent like every other stored amount. Left at e.g.
+        // 16.920608, the first edit of the transaction rewrote it to 16.92,
+        // and a re-import of the same statement then missed the duplicate
+        // check and added it again.
+        amount: Math.round(r.amount * rate * 100) / 100,
         // Captured here (not just left implicit in the converted amount) so
         // it stays visible on the transaction later — see
         // Transaction.conversionNote.
@@ -546,7 +549,7 @@ export function ImportWizard({
       setReviewResolvedCount(0);
       if (needsReview.length > 0) {
         setReviewQueue(needsReview);
-        seedReviewFields(needsReview);
+        seedReviewFields(needsReview, await freshChildVendors());
         setStep(4);
       } else {
         setStep(5);
@@ -605,7 +608,7 @@ export function ImportWizard({
         // continuation of the same import, not a new one.
         setReviewQueue(needsReview);
         setReviewTotal(needsReview.length);
-        seedReviewFields(needsReview);
+        seedReviewFields(needsReview, await freshChildVendors());
         setStep(4);
       }
     } catch (err) {
@@ -615,7 +618,19 @@ export function ImportWizard({
     }
   }
 
-  function seedReviewFields(rest: Transaction[]) {
+  // The import route mints a new ChildVendor for every fuzzy match, so right
+  // after an import this render's appState predates those
+  // vendors. Seeding the review from it found no parent for any fuzzy-matched
+  // row and defaulted every one to "create new". A failed refetch falls back
+  // to what's in hand — the import itself already succeeded.
+  async function freshChildVendors(): Promise<ChildVendor[]> {
+    return fetchState().then(
+      (s) => s.childVendors,
+      () => appState.childVendors
+    );
+  }
+
+  function seedReviewFields(rest: Transaction[], childVendors: ChildVendor[] = appState.childVendors) {
     if (rest.length > 0) {
       const item = rest[0];
       setReviewType(item.type);
@@ -624,7 +639,7 @@ export function ImportWizard({
       // confirm it — default to that parent instead of "create new" so
       // confirming is just Save & Next, not accidentally forking a
       // duplicate vendor.
-      const existingParentId = item.childVendorId ? childById.get(item.childVendorId)?.parentId : undefined;
+      const existingParentId = item.childVendorId ? childVendors.find((c) => c.id === item.childVendorId)?.parentId : undefined;
       setReviewParentId(existingParentId ?? "__new__");
       setReviewNewName(cleanVendorName(item.rawDescription));
       setReviewCategory("");
@@ -672,8 +687,12 @@ export function ImportWizard({
       // asking the user to resolve the same vendor over and over in one
       // import. Refetch rather than relying on the appState prop, since it
       // won't reflect this update until the next render.
-      if (rest.length > 0) {
-        const fresh = await fetchState();
+      // A failed refetch only costs the auto-linking — the save above already
+      // landed, so the queue must still advance. Letting it throw left the
+      // just-saved item at the head of the queue, and saving it again failed
+      // as a duplicate vendor.
+      const fresh = rest.length > 0 ? await fetchState().catch(() => null) : null;
+      if (fresh) {
         const stillNeedsReview: Transaction[] = [];
         let autoLinkFailures = 0;
         for (const item of rest) {
@@ -708,7 +727,7 @@ export function ImportWizard({
       await onReload();
       setReviewResolvedCount((c) => c + resolvedCount);
       setReviewQueue(rest);
-      seedReviewFields(rest);
+      seedReviewFields(rest, fresh?.childVendors);
     } finally {
       setSavingReview(false);
     }

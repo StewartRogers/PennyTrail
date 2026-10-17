@@ -107,7 +107,10 @@ export function Averages({ appState, onDrillDown }: { appState: AppState; onDril
   // TxnFilterSeed.vendorFilter), not by an individual raw description.
   function openVendorDrillDown(vendor: MonthlyAverageEntry, parent: ParentAverage, categoryName: string) {
     const txns = appState.transactions
-      .filter((t) => t.type === "purchase" && monthSet.has(monthKey(t.date)) && t.childVendorId === vendor.id)
+      // Same predicate as computeMonthlyAverages, including the per-transaction
+      // exclusion — otherwise the drill-down listed (and counted) purchases
+      // the row's own average had left out.
+      .filter((t) => t.type === "purchase" && !t.excludeFromDashboard && monthSet.has(monthKey(t.date)) && t.childVendorId === vendor.id)
       .sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : 0));
     onDrillDown({
       title: vendor.name,

@@ -28,3 +28,14 @@ export function readString(value: unknown): string {
 // permanent tax on every later request. Names past this are a client bug or a
 // hostile request, not a nickname.
 export const MAX_NAME_LENGTH = 200;
+
+// A yyyy-mm-dd string naming a day the calendar actually has. The bare
+// pattern check let "2024-13-45" through import, where it was stored and then
+// rendered as nothing and bucketed into a month that doesn't exist.
+export function isValidIsoDate(value: string): boolean {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
+  if (!match) return false;
+  const [y, mo, d] = [Number(match[1]), Number(match[2]), Number(match[3])];
+  const dt = new Date(y, mo - 1, d);
+  return dt.getFullYear() === y && dt.getMonth() === mo - 1 && dt.getDate() === d;
+}

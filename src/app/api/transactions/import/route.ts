@@ -3,7 +3,7 @@ import { updateState } from "@/lib/store";
 import { uid } from "@/lib/id";
 import { classifyTransactionType, cleanVendorName, resolveVendor } from "@/lib/classify";
 import { findChildByRawName, findParentByName } from "@/lib/vendors";
-import { readJsonObject, readString } from "@/lib/request";
+import { isValidIsoDate, readJsonObject, readString } from "@/lib/request";
 import type { ChildVendor, ParentVendor, Transaction } from "@/lib/types";
 
 interface ImportRow {
@@ -45,8 +45,6 @@ interface DuplicateRow {
 function duplicateKey(cardId: string, date: string, rawDescription: string, amount: number): string {
   return `${cardId}\0${date}\0${rawDescription}\0${Math.abs(amount)}`;
 }
-
-const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
 
 function isOptionalString(value: unknown): boolean {
   return value === undefined || value === null || typeof value === "string";
@@ -92,10 +90,12 @@ export async function POST(request: Request) {
     let skipped = 0;
     for (const row of rows) {
       if (
+        !row ||
+        typeof row !== "object" ||
         typeof row.amount !== "number" ||
         !Number.isFinite(row.amount) ||
         typeof row.date !== "string" ||
-        !ISO_DATE.test(row.date) ||
+        !isValidIsoDate(row.date) ||
         typeof row.rawDescription !== "string" ||
         typeof row.isCharge !== "boolean" ||
         !isOptionalString(row.vendorOverride) ||
@@ -118,7 +118,8 @@ export async function POST(request: Request) {
         // ahead of all ISO dates and renders as "Invalid Date". The optional
         // text overrides must be strings or absent; a number reaching
         // row.categoryText.trim() below threw a raw TypeError out of the
-        // mutator, discarding every already-processed row in the batch.
+        // mutator, discarding every already-processed row in the batch. A
+        // null row did the same on its first field access.
         skipped++;
         continue;
       }
@@ -159,14 +160,16 @@ export async function POST(request: Request) {
         const child: ChildVendor = { id: uid("child"), parentId: match.parentId, rawName: cleanedName };
         state.childVendors.push(child);
         childVendorId = child.id;
-      } else if (row.categoryText?.trim()) {
+      } else if (cleanedName && row.categoryText?.trim()) {
         // A mapped Category column names a category this bank already
         // assigns — trust it to create a brand-new vendor immediately
         // rather than asking the user to categorize something the bank
         // itself already told us how to classify. Parent and vendor names
         // are unique, so reuse an existing same-named one if present
         // (there's no user in the loop here to resolve a conflict) instead
-        // of forking a duplicate.
+        // of forking a duplicate. A row with no description has no name to
+        // give that vendor, so it stays in review instead of minting a
+        // blank-named one.
         const category = state.categories.find((c) => c.name.toLowerCase() === row.categoryText!.trim().toLowerCase());
         if (category) {
           let parent: ParentVendor | undefined = findParentByName(state.parentVendors, cleanedName);

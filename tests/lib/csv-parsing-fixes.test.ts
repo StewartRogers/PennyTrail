@@ -112,3 +112,70 @@ describe("guessMapping", () => {
     expect(mapping.creditCol).toBe(3);
   });
 });
+
+describe("parseCSV byte-order mark and padded quotes", () => {
+  it("strips a leading BOM so the first header's quotes still open a field", () => {
+    expect(parseCSV('﻿"Date, posted",Amount\n2026-03-05,1')[0]).toEqual(["Date, posted", "Amount"]);
+  });
+
+  it("treats a quote after leading spaces as opening the field", () => {
+    expect(parseCSV('a, "b, c",d')[0]).toEqual(["a", "b, c", "d"]);
+  });
+});
+
+describe("parseAmount strictness", () => {
+  it("does not read a 0-led group as thousands", () => {
+    expect(parseAmount("0.123")).toBe(0.123);
+    expect(parseAmount("0,50")).toBe(0.5);
+  });
+
+  it("rejects malformed grouping when both separators are present", () => {
+    expect(parseAmount("1,2,3.4")).toBeNaN();
+    expect(parseAmount("1,234.56")).toBe(1234.56);
+    expect(parseAmount("12.345.678,90")).toBe(12345678.9);
+  });
+
+  it("rejects cells with stray letters instead of stripping them", () => {
+    expect(parseAmount("1e3")).toBeNaN();
+    expect(parseAmount("USD-ish 5")).toBeNaN();
+    expect(parseAmount("12abc34")).toBeNaN();
+  });
+
+  it("still accepts currency symbols and codes", () => {
+    expect(parseAmount("CAD 12.34")).toBe(12.34);
+    expect(parseAmount("12.34 USD")).toBe(12.34);
+    expect(parseAmount("US$12.00")).toBe(12);
+    expect(parseAmount("€ 1.234,50")).toBe(1234.5);
+  });
+
+  it("only treats a minus at either end as a sign", () => {
+    expect(parseAmount("12.34-")).toBe(-12.34);
+    expect(parseAmount("-$12.34")).toBe(-12.34);
+    expect(parseAmount("$-12.34")).toBe(-12.34);
+  });
+
+  it("reads a trailing CR as a credit and DR as a debit", () => {
+    expect(parseAmount("12.34 CR")).toBe(-12.34);
+    expect(parseAmount("12.34CR")).toBe(-12.34);
+    expect(parseAmount("12.34 DR")).toBe(12.34);
+    expect(parseAmount("$1,000.00 cr")).toBe(-1000);
+  });
+});
+
+describe("parseDateFlexible strictness", () => {
+  it.each([
+    ["1/15/2026/9", "MM/DD/YYYY"],
+    ["01/15/126", "MM/DD/YYYY"],
+    ["15/01/12026", "DD/MM/YYYY"],
+    ["126-01-15", "YYYY-MM-DD"],
+    ["001/15/2026", "MM/DD/YYYY"],
+    ["Jan 5, 126", "Month DD, YYYY"],
+  ])("rejects %s (%s)", (input, format) => {
+    expect(parseDateFlexible(input, format)).toBeNull();
+  });
+
+  it("reads a 2-digit year that would land well in the future as 19xx", () => {
+    expect(parseDateFlexible("03/05/99", "MM/DD/YYYY")).toBe("1999-03-05");
+    expect(parseDateFlexible("03/05/26", "MM/DD/YYYY")).toBe("2026-03-05");
+  });
+});

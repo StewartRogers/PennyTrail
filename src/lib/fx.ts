@@ -21,7 +21,9 @@ export function addDaysISO(iso: string, days: number): string {
 
 export function enumerateDatesISO(startISO: string, endISO: string): string[] {
   const dates: string[] = [];
-  for (let d = startISO; d <= endISO; d = addDaysISO(d, 1)) dates.push(d);
+  // The length check stops the walk at year 10000: "10000-01-01" sorts
+  // before "9999-12-31", so the string comparison alone never terminated.
+  for (let d = startISO; d <= endISO && d.length === 10; d = addDaysISO(d, 1)) dates.push(d);
   return dates;
 }
 

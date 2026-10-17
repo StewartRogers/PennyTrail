@@ -3,18 +3,10 @@ import { updateState } from "@/lib/store";
 import { uid } from "@/lib/id";
 import { cleanVendorName } from "@/lib/classify";
 import { findChildByRawName, findParentByName } from "@/lib/vendors";
-import { MAX_NAME_LENGTH, readJsonObject } from "@/lib/request";
+import { MAX_NAME_LENGTH, isValidIsoDate, readJsonObject } from "@/lib/request";
 import type { ChildVendor, ParentVendor, TxnType } from "@/lib/types";
 
 const VALID_TYPES: TxnType[] = ["purchase", "payment", "credit", "cashback", "fee"];
-
-function isValidIsoDate(value: string): boolean {
-  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
-  if (!match) return false;
-  const [y, mo, d] = [Number(match[1]), Number(match[2]), Number(match[3])];
-  const dt = new Date(y, mo - 1, d);
-  return dt.getFullYear() === y && dt.getMonth() === mo - 1 && dt.getDate() === d;
-}
 
 export async function PATCH(request: Request, ctx: RouteContext<"/api/transactions/[id]">) {
   const { id } = await ctx.params;
@@ -31,7 +23,10 @@ export async function PATCH(request: Request, ctx: RouteContext<"/api/transactio
     const txn = state.transactions.find((t) => t.id === id);
     if (!txn) return { error: "not_found" as const };
 
-    if (typeof body.type === "string" && VALID_TYPES.includes(body.type as TxnType)) {
+    // An unrecognized type was silently ignored with a 200, so the caller
+    // was told the change landed when it hadn't.
+    if (body.type !== undefined) {
+      if (typeof body.type !== "string" || !VALID_TYPES.includes(body.type as TxnType)) return { error: "invalid_type" as const };
       txn.type = body.type as TxnType;
     }
 
@@ -142,6 +137,7 @@ export async function PATCH(request: Request, ctx: RouteContext<"/api/transactio
     if (result.error === "not_found") return NextResponse.json({ error: "Transaction not found" }, { status: 404 });
     if (result.error === "invalid_child") return NextResponse.json({ error: "Unknown child vendor" }, { status: 400 });
     if (result.error === "invalid_parent") return NextResponse.json({ error: "Unknown parent vendor" }, { status: 400 });
+    if (result.error === "invalid_type") return NextResponse.json({ error: `Type must be one of ${VALID_TYPES.join(", ")}` }, { status: 400 });
     if (result.error === "invalid_date") return NextResponse.json({ error: "Date must be a valid date (yyyy-mm-dd)" }, { status: 400 });
     if (result.error === "invalid_amount") return NextResponse.json({ error: "Amount must be a positive number" }, { status: 400 });
     if (result.error === "duplicate_parent") return NextResponse.json({ error: "A parent with this name already exists" }, { status: 409 });

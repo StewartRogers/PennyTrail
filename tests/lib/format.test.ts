@@ -77,3 +77,15 @@ describe("monthKey / monthLabel / quarterKey / yearKey", () => {
     expect(yearKey("2026-03-05")).toBe("2026");
   });
 });
+
+describe("currency formatting edge cases", () => {
+  it("never prints negative zero", () => {
+    expect(fmtCurrency(0.3 - 0.1 - 0.2)).toBe("$0.00");
+    expect(fmtCurrency(-0)).toBe("$0.00");
+  });
+
+  it("moves to the next tier where rounding would overflow the current one", () => {
+    expect(fmtCurrencyShort(999_999)).toBe("$1.0M");
+    expect(fmtCurrencyShort(999_949)).toBe("$999.9k");
+  });
+});

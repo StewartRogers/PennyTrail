@@ -45,8 +45,9 @@ async function readStateUnqueued(): Promise<AppState> {
     }
     throw err;
   }
+  let parsed: unknown;
   try {
-    return JSON.parse(raw) as AppState;
+    parsed = JSON.parse(raw);
   } catch (err: unknown) {
     // A hand-edited or partially-written store.json throws an opaque
     // "Unexpected token" error otherwise — every route surfaces this as a
@@ -55,6 +56,17 @@ async function readStateUnqueued(): Promise<AppState> {
     const message = err instanceof Error ? err.message : String(err);
     throw new Error(`${DATA_FILE} is not valid JSON (${message}) — fix or restore it from a backup before retrying`);
   }
+  if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
+    throw new Error(`${DATA_FILE} does not contain a store object — fix or restore it from a backup before retrying`);
+  }
+  // A hand-edited store missing one of the collections made every route
+  // throw a TypeError on first access; fill the gap with its empty default.
+  const state = parsed as Record<string, unknown>;
+  const defaults = emptyState();
+  for (const key of Object.keys(defaults) as (keyof AppState)[]) {
+    if (!Array.isArray(state[key])) state[key] = defaults[key];
+  }
+  return state as unknown as AppState;
 }
 
 // On Windows, renaming onto DATA_FILE can transiently fail with EPERM/EBUSY

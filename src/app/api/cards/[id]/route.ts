@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { updateState } from "@/lib/store";
-import { MAX_NAME_LENGTH, readJsonObject } from "@/lib/request";
+import { MAX_NAME_LENGTH, readJsonObject, readString } from "@/lib/request";
 
 export async function PATCH(request: Request, ctx: RouteContext<"/api/cards/[id]">) {
   const { id } = await ctx.params;
@@ -11,11 +11,15 @@ export async function PATCH(request: Request, ctx: RouteContext<"/api/cards/[id]
       return NextResponse.json({ error: "Card details are too long" }, { status: 400 });
     }
   }
+  // POST requires a name; a rename to whitespace shouldn't get around that.
+  if (body.name !== undefined && !readString(body.name)) {
+    return NextResponse.json({ error: "Card name is required" }, { status: 400 });
+  }
 
-  const { result: card } = await updateState((state) => {
+  const { result } = await updateState((state) => {
     const card = state.cards.find((c) => c.id === id);
-    if (!card) return null;
-    if (typeof body.name === "string") card.name = body.name;
+    if (!card) return { error: "not_found" as const };
+    if (body.name !== undefined) card.name = readString(body.name);
     if (typeof body.bank === "string") card.bank = body.bank;
     if (typeof body.last4 === "string") card.last4 = body.last4;
     if (body.network === "Visa" || body.network === "Mastercard") card.network = body.network;
@@ -23,9 +27,9 @@ export async function PATCH(request: Request, ctx: RouteContext<"/api/cards/[id]
       const currency = body.currency.trim().toUpperCase();
       if (/^[A-Z]{3}$/.test(currency)) card.currency = currency;
     }
-    return card;
+    return { card };
   });
 
-  if (!card) return NextResponse.json({ error: "Card not found" }, { status: 404 });
-  return NextResponse.json(card);
+  if ("error" in result) return NextResponse.json({ error: "Card not found" }, { status: 404 });
+  return NextResponse.json(result.card);
 }

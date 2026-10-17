@@ -26,9 +26,17 @@ npm install
 npm run dev
 ```
 
-The dev server runs on **http://localhost:3607** (not the Next.js default
+The dev server runs on **http://127.0.0.1:3607** (not the Next.js default
 3000 — see `scripts` in `package.json`). Production mode (`npm run build &&
-npm run start`) runs on **http://localhost:2607**.
+npm run start`) runs on **http://127.0.0.1:2607**.
+
+Every server script binds to loopback only (`-H 127.0.0.1`). PennyTrail has
+no login by design, so binding to all interfaces (Next's default) would let
+anyone on the same network read or delete your transaction history. Don't
+remove the `-H` flag to reach it from another device. `src/proxy.ts` also
+refuses API requests whose `Host` isn't loopback (DNS rebinding) and writes
+from another site's `Origin` (CSRF), and `next.config.ts` forbids framing
+the app (clickjacking).
 
 ## Testing
 
@@ -48,7 +56,7 @@ npm run test:watch  # re-run on file changes
 - `tests/components/` — React Testing Library tests for a few
   regression-prone screens.
 
-`test:server` (the `next dev -p 4607` alias) is unrelated — that's for
+`test:server` (the `next dev` alias on port 4607) is unrelated — that's for
 manually driving the app in a browser against a scratch data dir, not for
 running the automated suite.
 
@@ -111,11 +119,14 @@ Two invariants worth knowing if you touch the store or the routes:
 ## Maintenance notes
 
 - `package.json` has `overrides.postcss` (`^8.5.10`) and `overrides.sharp`
-  (`^0.35.3`) pins. The `postcss` one fixes a moderate-severity advisory in a
-  copy bundled inside `next`'s own dependencies. The `sharp` one fixes a
-  libvips CVE in `next`'s optional image-optimization dependency, which
-  `next` itself pins to a range (`^0.34.5`) that excludes the patched
-  version. **Do not run `npm audit fix --force`** — as of this writing,
+  (`^0.35.5`) pins. The `postcss` one fixes a moderate-severity advisory in a
+  copy bundled inside `next`'s own dependencies. The `sharp` one fixes
+  libvips/libheif/librsvg CVEs in `next`'s optional image-optimization
+  dependency; `next` 16.4.2 now asks for `^0.35.5` itself, but the pin stays
+  as a floor in case a future `next` loosens it. The remaining `npm audit`
+  findings (`eslint-config-next` → `fast-glob` → `micromatch` → `braces`)
+  are dev-only lint tooling, and npm's only offered fix is a downgrade to
+  `eslint-config-next@14`. **Do not run `npm audit fix --force`** — as of this writing,
   npm's own auto-fix for the `postcss` advisory is to downgrade `next` to
   `9.3.3`, a multi-major-version regression, not an actual fix. If you hit
   new audit findings, check what the suggested fix actually changes before

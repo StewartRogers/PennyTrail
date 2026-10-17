@@ -5,6 +5,9 @@
 // dollar, and every amount in this app already renders as a plain "$".
 export function fmtCurrency(n: number | null | undefined): string {
   if (n == null || isNaN(n)) return "$0.00";
+  // Float drift in a sum that nets to zero (0.30 - 0.10 - 0.20 is -2.8e-17),
+  // or a -0, otherwise printed as "-$0.00".
+  if (Math.abs(n) < 0.005) n = 0;
   return n.toLocaleString("en-CA", { style: "currency", currency: "CAD" });
 }
 
@@ -13,8 +16,10 @@ export function fmtCurrencyShort(n: number | null | undefined): string {
   const sign = (n || 0) < 0 ? "-" : "";
   // Without an M tier the "compact" form got *longer* than the real number
   // past a million: 1250000 rendered as "$1250.0k".
-  if (abs >= 1_000_000_000) return sign + "$" + (abs / 1_000_000_000).toFixed(1) + "B";
-  if (abs >= 1_000_000) return sign + "$" + (abs / 1_000_000).toFixed(1) + "M";
+  // Tier thresholds sit where toFixed(1) would round up into the next tier,
+  // so 999999 reads "$1.0M" rather than "$1000.0k".
+  if (abs >= 999_950_000) return sign + "$" + (abs / 1_000_000_000).toFixed(1) + "B";
+  if (abs >= 999_950) return sign + "$" + (abs / 1_000_000).toFixed(1) + "M";
   if (abs >= 1000) return sign + "$" + (abs / 1000).toFixed(1) + "k";
   return fmtCurrency(n);
 }

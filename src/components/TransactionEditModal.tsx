@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import type { Card, ParentVendor, Transaction, TxnType } from "@/lib/types";
 import { cleanVendorName } from "@/lib/classify";
 import { fmtDateShort } from "@/lib/format";
@@ -57,13 +57,20 @@ export function TransactionEditModal({
     return parent ? categoryById.get(parent.category)?.name ?? null : null;
   }, [parents, selectedParentId, categoryById]);
 
+  // Escape, a backdrop click, and × all closed the modal mid-save (only
+  // Cancel was disabled), so a save that then failed reported its error to an
+  // unmounted modal and was lost without a word.
+  const dismiss = useCallback(() => {
+    if (!saving) onClose();
+  }, [saving, onClose]);
+
   useEffect(() => {
     function onKeyDown(e: KeyboardEvent) {
-      if (e.key === "Escape") onClose();
+      if (e.key === "Escape") dismiss();
     }
     document.addEventListener("keydown", onKeyDown);
     return () => document.removeEventListener("keydown", onKeyDown);
-  }, [onClose]);
+  }, [dismiss]);
 
   const parsedAmount = Number(amount);
   const amountValid = amount.trim() !== "" && Number.isFinite(parsedAmount) && parsedAmount > 0;
@@ -101,7 +108,7 @@ export function TransactionEditModal({
 
   return (
     <div
-      onClick={onClose}
+      onClick={dismiss}
       style={{
         position: "fixed",
         inset: 0,
@@ -144,7 +151,7 @@ export function TransactionEditModal({
             </div>
           </div>
           <button
-            onClick={onClose}
+            onClick={dismiss}
             style={{ border: "none", background: "transparent", fontSize: 18, color: "var(--muted)", lineHeight: 1, flexShrink: 0 }}
           >
             ×

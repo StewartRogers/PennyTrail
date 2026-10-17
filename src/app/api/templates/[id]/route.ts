@@ -4,12 +4,12 @@ import { updateState } from "@/lib/store";
 export async function DELETE(_request: Request, ctx: RouteContext<"/api/templates/[id]">) {
   const { id } = await ctx.params;
 
-  const { result: deleted } = await updateState((state) => {
-    const before = state.templates.length;
+  const { result } = await updateState((state) => {
+    if (!state.templates.some((t) => t.id === id)) return { error: "not_found" as const };
     state.templates = state.templates.filter((t) => t.id !== id);
-    return state.templates.length < before;
+    return { ok: true as const };
   });
 
-  if (!deleted) return NextResponse.json({ error: "Template not found" }, { status: 404 });
+  if ("error" in result) return NextResponse.json({ error: "Template not found" }, { status: 404 });
   return NextResponse.json({ ok: true });
 }

@@ -1,7 +1,12 @@
 import { NextResponse } from "next/server";
 import { addDaysISO, enumerateDatesISO, fxSeriesName, resolveDailyRates, type FxObservation } from "@/lib/fx";
+import { isValidIsoDate } from "@/lib/request";
 
 const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
+// Generous for any real statement, but bounds the per-day work below — an
+// open-ended range (2024 to 9999) built millions of dates and blocked the
+// server for every other request while it did.
+const MAX_RANGE_DAYS = 3660;
 // Enough lookback to cross any real-world run of weekends + holidays, so the
 // first transaction in a statement still has a prior rate to carry forward
 // even if it falls right after a long weekend.
@@ -19,8 +24,11 @@ export async function GET(request: Request) {
   if (!/^[A-Z]{3}$/.test(currency)) {
     return NextResponse.json({ error: "A 3-letter currency code is required" }, { status: 400 });
   }
-  if (!ISO_DATE.test(start) || !ISO_DATE.test(end) || start > end) {
+  if (!isValidIsoDate(start) || !isValidIsoDate(end) || start > end) {
     return NextResponse.json({ error: "start and end must be valid yyyy-mm-dd dates, with start on or before end" }, { status: 400 });
+  }
+  if (addDaysISO(start, MAX_RANGE_DAYS) < end) {
+    return NextResponse.json({ error: `Date range is too long (max ${MAX_RANGE_DAYS} days)` }, { status: 400 });
   }
 
   const series = fxSeriesName(currency);
@@ -48,7 +56,9 @@ export async function GET(request: Request) {
       const cell = o?.[series] as Record<string, unknown> | undefined;
       return { date, rate: Number(cell?.v) };
     })
-    .filter((o: FxObservation) => ISO_DATE.test(o.date) && Number.isFinite(o.rate));
+    // A blank or null cell is Number("") === 0, which is finite — it would
+    // have converted every amount on that date to $0.
+    .filter((o: FxObservation) => ISO_DATE.test(o.date) && Number.isFinite(o.rate) && o.rate > 0);
 
   const neededDates = enumerateDatesISO(start, end);
   const resolved = resolveDailyRates(observations, neededDates);

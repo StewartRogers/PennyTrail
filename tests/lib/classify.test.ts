@@ -107,9 +107,22 @@ describe("classifyTransactionType", () => {
     expect(classifyTransactionType("PAYMENT THANK YOU", false)).toBe("payment");
   });
 
-  it("does not classify an interest charge as a payment even with THANK YOU-adjacent wording", () => {
-    expect(classifyTransactionType("INTEREST CHARGE ON PURCHASES", false)).toBe("fee");
+  it("classifies an interest charge as a fee", () => {
+    expect(classifyTransactionType("INTEREST CHARGE ON PURCHASES", true)).toBe("fee");
   });
+
+  it("does not classify a credit-side interest line as a payment", () => {
+    expect(classifyTransactionType("INTEREST CHARGE ON PURCHASES", false)).toBe("credit");
+  });
+
+  // A fee or interest line on the credit side is money coming back; typing it
+  // "fee" added it to category spend instead of subtracting it.
+  it.each(["PURCHASE INTEREST REVERSAL", "INTEREST CREDIT ADJ", "ANNUAL FEE REBATE", "ANNUAL FEE REVERSAL"])(
+    "classifies credit-side %s as a credit, not a fee",
+    (desc) => {
+      expect(classifyTransactionType(desc, false)).toBe("credit");
+    }
+  );
 
   it("classifies cashback", () => {
     expect(classifyTransactionType("CASHBACK REDEMPTION", false)).toBe("cashback");
@@ -131,11 +144,14 @@ describe("classifyTransactionType", () => {
     expect(classifyTransactionType("COFFEE SHOP", true)).toBe("purchase");
   });
 
-  it("classifies a non-charge with no other signal as a payment", () => {
-    expect(classifyTransactionType("MISC CREDIT LINE ITEM", false)).toBe("payment");
+  // Payments are caught by keyword first, so anything else on the credit side
+  // is a merchant refund — many exports give nothing but the merchant name.
+  it("classifies a non-charge with no other signal as a credit", () => {
+    expect(classifyTransactionType("MISC CREDIT LINE ITEM", false)).toBe("credit");
+    expect(classifyTransactionType("AMAZON.CA", false)).toBe("credit");
   });
 
   it("uses the vendor-hint column when description is blank", () => {
-    expect(classifyTransactionType("", false, undefined, "PURCHASE INTEREST")).toBe("fee");
+    expect(classifyTransactionType("", true, undefined, "PURCHASE INTEREST")).toBe("fee");
   });
 });

@@ -163,16 +163,15 @@ export function classifyTransactionType(
   // dashboard sums only type === "purchase" it dropped out of Total Spend
   // entirely instead of counting as the purchase it is.
   if (!isCharge && /CASH ?BACK|REWARDS? REDEEM|POINTS REDEEM/.test(combined)) return "cashback";
-  // The refund exclusion matters here: a credit-side "Annual Fee Reversal"
-  // or "Annual Fee Refund" line is a credit, not a fee.
-  if (
-    /\bANNUAL FEE\b|\bMEMBERSHIP FEE\b|\bCARD FEE\b/.test(combined) &&
-    !(!isCharge && /REFUND|RETURN|REVERSAL|CREDIT ADJ/.test(combined))
-  ) {
-    return "fee";
-  }
-  if (/INTEREST|FINANCE CHARGE|FINANCE CHG|INT CHRG|INT CHG/.test(combined)) return "fee";
-  if (!isCharge && /REFUND|RETURN|CREDIT ADJ/.test(combined)) return "credit";
-  if (!isCharge) return "payment";
+  // Fees are charge-side only. A credit-side fee or interest line is money
+  // coming back ("ANNUAL FEE REBATE", "PURCHASE INTEREST REVERSAL"), and
+  // typing it as a fee added it to category spend instead of subtracting it.
+  if (isCharge && /\bANNUAL FEE\b|\bMEMBERSHIP FEE\b|\bCARD FEE\b/.test(combined)) return "fee";
+  if (isCharge && /INTEREST|FINANCE CHARGE|FINANCE CHG|INT CHRG|INT CHG/.test(combined)) return "fee";
+  // Payments were already caught by keyword above, so any other credit-side
+  // line is money back from a merchant — many exports label a refund with
+  // nothing but the merchant name ("AMAZON.CA"). Typing it "payment" zeroed
+  // it out of category spend instead of offsetting the original purchase.
+  if (!isCharge) return "credit";
   return "purchase";
 }
