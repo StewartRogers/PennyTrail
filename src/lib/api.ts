@@ -5,6 +5,13 @@ async function request<T>(url: string, options?: RequestInit): Promise<T> {
     ...options,
     headers: { "Content-Type": "application/json", ...(options?.headers || {}) },
   });
+  // The session expired (or was signed out elsewhere): go sign in again and
+  // come back to this page, rather than showing a "Sign in required" error.
+  if (res.status === 401 && typeof window !== "undefined") {
+    const here = window.location.pathname + window.location.search;
+    window.location.assign(here === "/" ? "/login" : `/login?next=${encodeURIComponent(here)}`);
+    throw new Error("Signed out — redirecting to sign in");
+  }
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));
     throw new Error(body.error || `Request failed: ${res.status}`);

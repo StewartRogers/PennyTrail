@@ -10,11 +10,27 @@ This block is written and re-added by `next dev` — verify at `node_modules/nex
 
 ## PennyTrail-specific notes
 
-- **Stack**: Next.js 16.4.2 (App Router), React 19, TypeScript, Tailwind v4.
-  Persistence is a local JSON file (`data/store.json`) via
-  `src/lib/store.ts`, not a database — this is a single-user, no-auth
-  personal tool by design, so don't introduce auth/multi-tenancy or swap in
-  a DB without being asked.
+- **Stack**: Next.js 16.4.2 (App Router), React 19, TypeScript, Tailwind v4,
+  deployed on Vercel (project `pennytrail`, linked in `.vercel/`). It's a
+  single-user personal tool by design — don't introduce multi-user accounts
+  or multi-tenancy without being asked.
+- **Two storage backends, one document.** `src/lib/store.ts` keeps the whole
+  `AppState` as one JSON document: in `data/store.json` locally, and in the
+  single `pennytrail_store` row of Neon Postgres when
+  `PENNYTRAIL_STORAGE=postgres` (set on Vercel Production + Preview only;
+  `src/lib/storePostgres.ts`, schema in `db/schema.sql`). The backend is an
+  explicit opt-in, never inferred from `DATABASE_URL`: `vercel env pull`
+  writes the *production* database URL into `.env.local`, so never run a
+  local server or script with `PENNYTRAIL_STORAGE=postgres`, `db:import`, or
+  any write against that URL without the user asking — it's their live data.
+  Schema changes go in `db/schema.sql` (idempotent) and are applied with
+  `npm run db:migrate` over `DATABASE_URL_UNPOOLED`.
+- **Sign-in is env-configured, single account** (`src/lib/auth.ts`):
+  `PENNYTRAIL_USERNAME`, `PENNYTRAIL_PASSWORD_HASH` (scrypt, colon-delimited
+  because Next's .env loader expands `$`), `PENNYTRAIL_SESSION_SECRET`. Off
+  when none are set locally; on Vercel, missing or partial settings make the
+  proxy return 503 for everything — keep it failing closed. The user sets the
+  password with `npm run auth:setup`; never ask for it, type it, or log it.
 - **Ports are non-default**: `npm run dev` serves on `3607`, `npm run
   start` on `2607` (see `scripts` in `package.json`), not the usual 3000.
   Ad-hoc verification (an agent driving the app to prove a change works)
@@ -22,15 +38,17 @@ This block is written and re-added by `next dev` — verify at `node_modules/nex
   way a verification run never collides with a real dev server the user
   already has open on `3607`. Also point `PENNYTRAIL_DATA_DIR` at a
   scratch directory for these runs so they don't read/write the user's
-  real `data/store.json`.
-- **Loopback only, and the API checks who's asking.** Every server script
-  passes `-H 127.0.0.1` — with no auth, Next's default `0.0.0.0` bind
+  real `data/store.json`. Stopping a backgrounded `test:server` can leave
+  its node process listening on 4607 — free the port before the next run,
+  or the next run's requests hit the stale server.
+- **Loopback only, and the proxy checks who's asking.** Every server script
+  passes `-H 127.0.0.1` — with sign-in off, Next's default `0.0.0.0` bind
   exposed the whole history to the LAN. Don't drop it. `src/proxy.ts`
-  (Next 16's renamed middleware) 403s `/api/*` requests with a non-loopback
-  `Host` and non-GET requests with a foreign `Origin`; reach the app as
-  `127.0.0.1` or `localhost`, and expect requests built with other hostnames
-  to be refused. Route tests call handlers directly, so the proxy doesn't run
-  in `npm test`.
+  (Next 16's renamed middleware) runs on every request: it 403s non-GET
+  requests with a foreign `Origin` (always), requires a session cookie on
+  every page and API route except `/login` and `/api/auth/*` (when sign-in
+  is on), and 403s non-loopback `Host` values (when it's off). Route tests
+  call handlers directly, so the proxy only runs in `tests/api/proxy.test.ts`.
 - **`package.json` has `overrides.postcss` and `overrides.sharp` pins.**
   Don't remove them and never run `npm audit fix --force` here — npm's own
   suggested fix for the bundled-postcss advisory is to downgrade `next` to
@@ -47,7 +65,8 @@ This block is written and re-added by `next dev` — verify at `node_modules/nex
   a truncated native binary in `node_modules` (Vite's `lightningcss`), not a
   code or network problem — `npm cache verify`, delete the package directory,
   and `npm install`. See the README's maintenance notes.
-- **Store contract — a rejected request must persist nothing.**
+- **Store contract — a rejected request must persist nothing** (both
+  backends: the Postgres one rolls the transaction back).
   `updateState` skips the write when the mutator returns an object with an
   `error` key, so routes signal failure by *returning* `{ error: "..." }`
   from inside the mutator (never by throwing, and never by mutating and then

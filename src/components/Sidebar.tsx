@@ -20,13 +20,23 @@ export function Sidebar({
   pendingReviewCount,
   cardCount,
   txnCount,
+  signOutEnabled = false,
 }: {
   screen: Screen;
   onNavigate: (screen: Screen) => void;
   pendingReviewCount: number;
   cardCount: number;
   txnCount: number;
+  signOutEnabled?: boolean;
 }) {
+  async function signOut() {
+    await fetch("/api/auth/logout", { method: "POST" }).catch(() => {});
+    // A full page load rather than a client-side route change, so none of the
+    // financial data the app had loaded survives in memory after sign-out.
+    // eslint-disable-next-line @next/next/no-location-assign-relative-destination
+    window.location.assign("/login");
+  }
+
   const navStyle = (active: boolean): CSSProperties => ({
     display: "flex",
     alignItems: "center",
@@ -96,6 +106,14 @@ export function Sidebar({
         <div style={{ paddingTop: 12 }}>
           {cardCount} card{cardCount === 1 ? "" : "s"} · {txnCount} txn{txnCount === 1 ? "" : "s"}
         </div>
+        {signOutEnabled && (
+          <button
+            onClick={signOut}
+            style={{ border: "none", background: "transparent", color: "var(--muted)", padding: "8px 0 0", fontSize: 11.5, textDecoration: "underline" }}
+          >
+            Sign out
+          </button>
+        )}
       </div>
     </div>
   );

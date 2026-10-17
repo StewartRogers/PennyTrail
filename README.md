@@ -30,13 +30,56 @@ The dev server runs on **http://127.0.0.1:3607** (not the Next.js default
 3000 — see `scripts` in `package.json`). Production mode (`npm run build &&
 npm run start`) runs on **http://127.0.0.1:2607**.
 
-Every server script binds to loopback only (`-H 127.0.0.1`). PennyTrail has
-no login by design, so binding to all interfaces (Next's default) would let
-anyone on the same network read or delete your transaction history. Don't
-remove the `-H` flag to reach it from another device. `src/proxy.ts` also
-refuses API requests whose `Host` isn't loopback (DNS rebinding) and writes
-from another site's `Origin` (CSRF), and `next.config.ts` forbids framing
-the app (clickjacking).
+Every server script binds to loopback only (`-H 127.0.0.1`). Locally there's
+no sign-in unless you configure one (see [Deploying to Vercel](#deploying-to-vercel)),
+so binding to all interfaces (Next's default) would let anyone on the same
+network read or delete your transaction history. Don't remove the `-H` flag
+to reach it from another device — deploy it instead. With sign-in off,
+`src/proxy.ts` also refuses requests whose `Host` isn't loopback (DNS
+rebinding). It always refuses writes from another site's `Origin` (CSRF), and
+`next.config.ts` forbids framing the app (clickjacking).
+
+## Deploying to Vercel
+
+The deployed app runs with two things the local one doesn't need:
+
+- **A database.** Vercel functions can't keep a file between requests, so the
+  deployment stores the same JSON document in Neon Postgres (one row in
+  `pennytrail_store`, locked per write so concurrent requests can't lose
+  updates). `PENNYTRAIL_STORAGE=postgres` selects it; locally it's unset and
+  `data/store.json` is used, even though `.env.local` holds the database URL.
+- **A sign-in.** One account, configured by environment variables. Every page
+  and API route requires it; a deployment without valid sign-in settings
+  serves nothing (503) rather than serving your data openly. Failed attempts
+  are throttled per IP (5 per 15 minutes).
+
+| Variable | Set by | Notes |
+| --- | --- | --- |
+| `DATABASE_URL`, `DATABASE_URL_UNPOOLED`, … | Neon integration | Pooled URL for the app, direct URL for scripts |
+| `PENNYTRAIL_STORAGE` | already set (`postgres`) | Production + Preview only |
+| `PENNYTRAIL_SESSION_SECRET` | already set (random) | Signs session cookies; changing it signs everyone out |
+| `PENNYTRAIL_USERNAME` | `npm run auth:setup` | |
+| `PENNYTRAIL_PASSWORD_HASH` | `npm run auth:setup` | scrypt hash — the password itself is never stored |
+
+The project is linked (`.vercel/`) and Neon is provisioned. To go live:
+
+```bash
+npx vercel env pull .env.local   # refresh local copies of the env vars
+npm run auth:setup               # choose your username + password (typed hidden)
+npm run db:import                # one-time copy of data/store.json into Neon
+npx vercel --prod                # deploy (or push to a Git-connected branch)
+```
+
+- `npm run db:migrate` applies `db/schema.sql` (idempotent; `db:import` runs
+  it too). It's already been applied to the provisioned database.
+- `npm run db:import` refuses to overwrite a database that already has data
+  unless you pass `-- --force`. After go-live, the database — not
+  `data/store.json` — is the live copy.
+- To change the password later, run `npm run auth:setup` again and redeploy;
+  that also signs out every existing session. `npm run auth:setup -- --print`
+  prints the settings instead, for trying sign-in locally via `.env.local`.
+- Preview deployments use the same database and the same sign-in as
+  production.
 
 ## Testing
 
@@ -62,8 +105,9 @@ running the automated suite.
 
 ## Data & persistence
 
-All app data (cards, categories, import templates, vendor rules,
-transactions) is stored in `data/store.json`, created on first run. That
+Locally, all app data (cards, categories, import templates, vendor rules,
+transactions) is stored in `data/store.json`, created on first run (the
+Vercel deployment keeps the same document in Postgres instead — see above). That
 directory is gitignored — it's your personal financial data, not sample
 content, and should never be committed. Reads/writes are serialized through
 a single queue with atomic temp-file+rename writes (the temp file is fsynced
@@ -109,8 +153,12 @@ Two invariants worth knowing if you touch the store or the routes:
 
 - `src/lib/` — framework-agnostic business logic: CSV parsing
   (`csv.ts`), transaction classification (`classify.ts`), formatting
-  (`format.ts`), the JSON data store (`store.ts`), and the client-side API
-  wrapper (`api.ts`).
+  (`format.ts`), the data store (`store.ts`, with the Postgres backend in
+  `storePostgres.ts`), sign-in (`auth.ts`, `loginThrottle.ts`), and the
+  client-side API wrapper (`api.ts`).
+- `src/proxy.ts` — runs before every request: sign-in, CSRF, and host checks.
+- `db/schema.sql`, `scripts/` — the Postgres schema and the `db:*` /
+  `auth:setup` scripts.
 - `src/app/api/` — server-side Route Handlers (cards, categories,
   templates, transactions) backed by the JSON store.
 - `src/components/` — the client-rendered UI, one component per screen,

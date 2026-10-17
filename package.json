@@ -11,10 +11,15 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage.enabled --coverage.provider=v8 --coverage.include='src/**'",
-    "lint": "eslint"
+    "lint": "eslint",
+    "db:migrate": "node --env-file-if-exists=.env.local scripts/db-migrate.mjs",
+    "db:import": "node --env-file-if-exists=.env.local scripts/db-import.mjs",
+    "auth:setup": "node scripts/auth-setup.mjs"
   },
   "dependencies": {
+    "@vercel/functions": "^3.10.1",
     "next": "16.4.2",
+    "pg": "^8.23.1",
     "react": "19.2.4",
     "react-dom": "19.2.4"
   },
@@ -24,6 +29,7 @@
     "@testing-library/react": "^16.3.2",
     "@testing-library/user-event": "^14.6.1",
     "@types/node": "^20",
+    "@types/pg": "^8.23.1",
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "@vitejs/plugin-react": "^6.0.5",

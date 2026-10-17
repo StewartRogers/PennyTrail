@@ -17,7 +17,7 @@ import { VendorMappings } from "./VendorMappings";
 
 export type Screen = "dashboard" | "averages" | "import" | "transactions" | "categories" | "vendors" | "cards" | "templates";
 
-function AppInner() {
+function AppInner({ signOutEnabled }: { signOutEnabled: boolean }) {
   const [screen, setScreen] = useState<Screen>("dashboard");
   const [appState, setAppState] = useState<AppState | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -114,6 +114,7 @@ function AppInner() {
         pendingReviewCount={pendingReviewCount}
         cardCount={appState.cards.length}
         txnCount={appState.transactions.length}
+        signOutEnabled={signOutEnabled}
       />
 
       <div style={{ flex: 1, minWidth: 0, padding: "32px 44px 100px", boxSizing: "border-box" }}>
@@ -173,10 +174,10 @@ function AppInner() {
   );
 }
 
-export default function App() {
+export default function App({ signOutEnabled = false }: { signOutEnabled?: boolean }) {
   return (
     <ToastProvider>
-      <AppInner />
+      <AppInner signOutEnabled={signOutEnabled} />
     </ToastProvider>
   );
 }

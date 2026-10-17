@@ -1,7 +1,31 @@
 import { mkdir, open, readFile, rename, unlink } from "fs/promises";
 import path from "path";
 import type { AppState } from "./types";
-import { defaultCategories } from "./categories";
+import { emptyState, isAbort, normalizeState } from "./storeState";
+
+// Where the data lives. Unset (or "file") is the local JSON file — dev, the
+// test suite, and `npm run start`. "postgres" is the Vercel deployment's
+// database (storePostgres.ts); it's opt-in rather than inferred from
+// DATABASE_URL because `vercel env pull` writes the production DATABASE_URL
+// into .env.local, and a local dev server must never silently start editing
+// the deployed data.
+function storageBackend(): "file" | "postgres" {
+  const configured = process.env.PENNYTRAIL_STORAGE?.trim().toLowerCase() || "file";
+  if (configured !== "file" && configured !== "postgres") {
+    throw new Error(`PENNYTRAIL_STORAGE must be "file" or "postgres", not "${process.env.PENNYTRAIL_STORAGE}"`);
+  }
+  // Vercel functions have no persistent filesystem: file writes fail (or land
+  // in a throwaway /tmp) and the data would vanish. Refuse instead.
+  if (configured === "file" && process.env.VERCEL) {
+    throw new Error("PENNYTRAIL_STORAGE=postgres must be set on Vercel — the file store can't persist there");
+  }
+  return configured;
+}
+
+// Imported lazily so the file store (and the test suite) never loads pg.
+function postgres() {
+  return import("./storePostgres");
+}
 
 // Overridable so verification/test runs can point at a scratch directory
 // instead of the real store — defaults to the normal on-disk location.
@@ -9,17 +33,6 @@ const DATA_DIR = process.env.PENNYTRAIL_DATA_DIR
   ? path.resolve(process.env.PENNYTRAIL_DATA_DIR)
   : path.join(process.cwd(), "data");
 const DATA_FILE = path.join(DATA_DIR, "store.json");
-
-function emptyState(): AppState {
-  return {
-    cards: [],
-    categories: defaultCategories(),
-    templates: [],
-    parentVendors: [],
-    childVendors: [],
-    transactions: [],
-  };
-}
 
 // Serializes every read and write through one queue, so concurrent requests
 // can't interleave a read-modify-write cycle (lost updates) or observe a
@@ -56,17 +69,7 @@ async function readStateUnqueued(): Promise<AppState> {
     const message = err instanceof Error ? err.message : String(err);
     throw new Error(`${DATA_FILE} is not valid JSON (${message}) — fix or restore it from a backup before retrying`);
   }
-  if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
-    throw new Error(`${DATA_FILE} does not contain a store object — fix or restore it from a backup before retrying`);
-  }
-  // A hand-edited store missing one of the collections made every route
-  // throw a TypeError on first access; fill the gap with its empty default.
-  const state = parsed as Record<string, unknown>;
-  const defaults = emptyState();
-  for (const key of Object.keys(defaults) as (keyof AppState)[]) {
-    if (!Array.isArray(state[key])) state[key] = defaults[key];
-  }
-  return state as unknown as AppState;
+  return normalizeState(parsed, DATA_FILE);
 }
 
 // On Windows, renaming onto DATA_FILE can transiently fail with EPERM/EBUSY
@@ -112,27 +115,21 @@ async function writeStateUnqueued(state: AppState): Promise<void> {
   }
 }
 
-export function readState(): Promise<AppState> {
+export async function readState(): Promise<AppState> {
+  if (storageBackend() === "postgres") return (await postgres()).readState();
   return enqueue(readStateUnqueued);
 }
 
-export function writeState(state: AppState): Promise<void> {
+export async function writeState(state: AppState): Promise<void> {
+  if (storageBackend() === "postgres") return (await postgres()).writeState(state);
   return enqueue(() => writeStateUnqueued(state));
 }
 
-// Every route signals rejection by returning a discriminated `{ error }`
-// object from its mutator and mapping that to a status code. A mutator that
-// bails out partway can already have mutated `state` before it hit the
-// failing check, so writing unconditionally would persist the changes made by
-// a request the caller was told had failed (e.g. PATCH /api/transactions/[id]
-// sets txn.type before it validates parentId, so a 400 response still left
-// the type change on disk). Treat an `error` key as "abort": drop the mutated
-// state without writing, and let the next read re-parse from disk.
-function isAbort(result: unknown): boolean {
-  return typeof result === "object" && result !== null && "error" in result;
-}
-
-export function updateState<T>(mutator: (state: AppState) => T): Promise<{ state: AppState; result: T }> {
+// Runs `mutator` against the current state and persists the result — unless
+// it returns an `{ error }` object, in which case nothing is written (see
+// isAbort in storeState.ts).
+export async function updateState<T>(mutator: (state: AppState) => T): Promise<{ state: AppState; result: T }> {
+  if (storageBackend() === "postgres") return (await postgres()).updateState(mutator);
   return enqueue(async () => {
     const state = await readStateUnqueued();
     const result = mutator(state);
