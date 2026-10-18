@@ -92,6 +92,13 @@ export function defaultBankHolidays(fromYear: number, toYear: number): string[] 
   return [...new Set(dates)].sort();
 }
 
+// A new account's list: back to 2020 (the spreadsheet history starts in
+// January 2024) through two years ahead. Editable per account, and extended
+// from the Accounts screen when a later year comes up.
+export function initialBankHolidays(now: Date = new Date()): string[] {
+  return defaultBankHolidays(2020, now.getFullYear() + 2);
+}
+
 export function isBusinessDay(iso: string, holidays: ReadonlySet<string>): boolean {
   return !isWeekend(iso) && !holidays.has(iso);
 }
