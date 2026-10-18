@@ -4,6 +4,15 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { AppState } from "@/lib/types";
 import { fetchState } from "@/lib/api";
 import { Sidebar } from "./Sidebar";
+import { CashFlowMonthView } from "./cashflow/CashFlowMonthView";
+import { CashFlowUpcoming } from "./cashflow/CashFlowUpcoming";
+import { CashFlowSpending } from "./cashflow/CashFlowSpending";
+import { CashFlowHistory } from "./cashflow/CashFlowHistory";
+import { RecurringItems } from "./cashflow/RecurringItems";
+import { BankAccounts } from "./cashflow/BankAccounts";
+import { BankImport } from "./cashflow/BankImport";
+import { BankTransactions } from "./cashflow/BankTransactions";
+import { AccountPicker, NoAccount, attentionCount, currentMonthKey, todayIso } from "./cashflow/shared";
 import { DrillDownModal, type DrillDown } from "./DrillDownModal";
 import { ToastProvider } from "./ToastContext";
 import { Dashboard } from "./Dashboard";
@@ -15,10 +24,44 @@ import { Cards } from "./Cards";
 import { Templates } from "./Templates";
 import { VendorMappings } from "./VendorMappings";
 
-export type Screen = "dashboard" | "averages" | "import" | "transactions" | "categories" | "vendors" | "cards" | "templates";
+export type Workspace = "cards" | "cashflow";
+
+export type Screen =
+  | "dashboard"
+  | "averages"
+  | "import"
+  | "transactions"
+  | "categories"
+  | "vendors"
+  | "cards"
+  | "templates"
+  | "cf-month"
+  | "cf-upcoming"
+  | "cf-spending"
+  | "cf-bank"
+  | "cf-import"
+  | "cf-items"
+  | "cf-history"
+  | "cf-accounts";
+
+const HOME: Record<Workspace, Screen> = { cards: "dashboard", cashflow: "cf-month" };
+const WORKSPACE_KEY = "pennytrail.workspace";
+
+// The side last used is a per-browser convenience, so storage failing
+// (private window, blocked site data) just means starting on Credit Cards.
+function storedWorkspace(): Workspace {
+  try {
+    return window.localStorage.getItem(WORKSPACE_KEY) === "cashflow" ? "cashflow" : "cards";
+  } catch {
+    return "cards";
+  }
+}
 
 function AppInner({ signOutEnabled }: { signOutEnabled: boolean }) {
+  const [workspace, setWorkspace] = useState<Workspace>("cards");
   const [screen, setScreen] = useState<Screen>("dashboard");
+  const [cfAccountId, setCfAccountId] = useState<string | null>(null);
+  const [cfMonthKey, setCfMonthKey] = useState<string>(currentMonthKey);
   const [appState, setAppState] = useState<AppState | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [drillDown, setDrillDown] = useState<DrillDown | null>(null);
@@ -44,11 +87,34 @@ function AppInner({ signOutEnabled }: { signOutEnabled: boolean }) {
     }
   }, []);
 
+  const changeWorkspace = useCallback((next: Workspace) => {
+    setWorkspace(next);
+    setScreen(HOME[next]);
+    try {
+      window.localStorage.setItem(WORKSPACE_KEY, next);
+    } catch {
+      // Storage unavailable — the choice just isn't remembered.
+    }
+  }, []);
+
+  const openCashFlowMonth = useCallback((monthKey: string) => {
+    setCfMonthKey(monthKey);
+    setScreen("cf-month");
+  }, []);
+
   useEffect(() => {
     let cancelled = false;
     fetchState()
       .then((state) => {
-        if (!cancelled) setAppState(state);
+        if (cancelled) return;
+        setAppState(state);
+        // Applied with the first data, while the loading screen still hides
+        // the sidebar — the server render can't know what this browser stored.
+        const stored = storedWorkspace();
+        if (stored !== "cards") {
+          setWorkspace(stored);
+          setScreen(HOME[stored]);
+        }
       })
       .catch((err) => {
         if (!cancelled) setLoadError(err instanceof Error ? err.message : "Failed to load data");
@@ -105,15 +171,26 @@ function AppInner({ signOutEnabled }: { signOutEnabled: boolean }) {
   }
 
   const pendingReviewCount = appState.transactions.filter((t) => t.needsReview).length;
+  // The selected bank account, falling back to the first one (or none yet).
+  const accountId = appState.bankAccounts.some((a) => a.id === cfAccountId) ? cfAccountId! : (appState.bankAccounts[0]?.id ?? null);
+  const accountMonthIds = new Set(appState.cashFlowMonths.filter((m) => m.accountId === accountId).map((m) => m.id));
+  const accountEntries = appState.cashFlowEntries.filter((e) => accountMonthIds.has(e.monthId));
+  const bankReview = appState.bankTransactions.filter((t) => t.accountId === accountId && t.needsReview).length;
+  const footer =
+    workspace === "cards"
+      ? `${appState.cards.length} card${appState.cards.length === 1 ? "" : "s"} · ${appState.transactions.length} txn${appState.transactions.length === 1 ? "" : "s"}`
+      : `${accountMonthIds.size} month${accountMonthIds.size === 1 ? "" : "s"} · ${appState.bankTransactions.length} bank line${appState.bankTransactions.length === 1 ? "" : "s"}`;
+  const needsAccount = screen.startsWith("cf-") && screen !== "cf-accounts" && !accountId;
 
   return (
     <div style={{ display: "flex", minHeight: "100vh", alignItems: "stretch" }}>
       <Sidebar
+        workspace={workspace}
+        onWorkspaceChange={changeWorkspace}
         screen={screen}
         onNavigate={setScreen}
-        pendingReviewCount={pendingReviewCount}
-        cardCount={appState.cards.length}
-        txnCount={appState.transactions.length}
+        badges={{ transactions: pendingReviewCount, "cf-upcoming": attentionCount(accountEntries, todayIso()), "cf-bank": bankReview }}
+        footer={footer}
         signOutEnabled={signOutEnabled}
       />
 
@@ -159,6 +236,23 @@ function AppInner({ signOutEnabled }: { signOutEnabled: boolean }) {
         )}
         {screen === "cards" && <Cards appState={appState} onReload={reload} />}
         {screen === "templates" && <Templates appState={appState} onReload={reload} />}
+
+        {needsAccount && <NoAccount onGoAccounts={() => setScreen("cf-accounts")} />}
+        {accountId && appState.bankAccounts.length > 1 && screen.startsWith("cf-") && screen !== "cf-accounts" && (
+          <div style={{ marginBottom: 12 }}>
+            <AccountPicker accounts={appState.bankAccounts} value={accountId} onChange={setCfAccountId} />
+          </div>
+        )}
+        {accountId && screen === "cf-month" && (
+          <CashFlowMonthView appState={appState} onReload={reload} accountId={accountId} monthKey={cfMonthKey} onMonthKeyChange={setCfMonthKey} onGoHistory={() => setScreen("cf-history")} />
+        )}
+        {accountId && screen === "cf-upcoming" && <CashFlowUpcoming appState={appState} onReload={reload} accountId={accountId} onOpenMonth={openCashFlowMonth} />}
+        {accountId && screen === "cf-spending" && <CashFlowSpending appState={appState} accountId={accountId} monthKey={cfMonthKey} onMonthKeyChange={setCfMonthKey} />}
+        {accountId && screen === "cf-bank" && <BankTransactions appState={appState} onReload={reload} accountId={accountId} />}
+        {accountId && screen === "cf-import" && <BankImport appState={appState} onReload={reload} accountId={accountId} onGoTransactions={() => setScreen("cf-bank")} />}
+        {accountId && screen === "cf-items" && <RecurringItems appState={appState} onReload={reload} accountId={accountId} />}
+        {accountId && screen === "cf-history" && <CashFlowHistory appState={appState} onReload={reload} accountId={accountId} onOpenMonth={openCashFlowMonth} />}
+        {screen === "cf-accounts" && <BankAccounts appState={appState} onReload={reload} />}
       </div>
 
       {drillDown && (

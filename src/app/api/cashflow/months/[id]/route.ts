@@ -138,7 +138,7 @@ export async function PATCH(request: Request, ctx: RouteContext<"/api/cashflow/m
       outside_month: ["Checkpoint dates must be inside the month", 400],
       duplicate_checkpoint: ["Two checkpoints can't share a date", 400],
     };
-    const [message, status] = messages[result.error];
+    const [message, status] = messages[result.error as string];
     return NextResponse.json({ error: message }, { status });
   }
   return NextResponse.json(result);

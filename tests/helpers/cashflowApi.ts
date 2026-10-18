@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-explicit-any */
 import { jsonRequest } from "./testStore";
 
 // Thin wrappers over the Cash Flow route handlers for API tests. Each loads

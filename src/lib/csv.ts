@@ -86,8 +86,10 @@ export function guessMapping(headers: string[]): GuessedMapping {
     dateCol: find("transaction date", "posted date", "post date", "date"),
     descCol: find("description", "merchant", "payee", "details", "name"),
     amountCol: find("amount", "amt"),
-    debitCol: find("debit"),
-    creditCol: find("credit"),
+    // Chequing exports name the split columns by direction instead
+    // ("Funds Out" / "Funds In", "Withdrawals" / "Deposits").
+    debitCol: find("debit", "funds out", "withdrawal"),
+    creditCol: find("credit", "funds in", "deposit"),
     categoryCol: find("category"),
     typeCol: find("transaction type", "type"),
   };

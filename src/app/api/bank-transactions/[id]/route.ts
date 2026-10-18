@@ -62,7 +62,7 @@ export async function PATCH(request: Request, ctx: RouteContext<"/api/bank-trans
       duplicate_parent: ["A parent with this name already exists", 409],
       duplicate_vendor: ["This vendor already exists — pick its parent instead of creating a new one", 409],
     };
-    const [message, status] = messages[result.error];
+    const [message, status] = messages[result.error as string];
     return NextResponse.json({ error: message }, { status });
   }
   return NextResponse.json(result.txn);
