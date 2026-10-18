@@ -112,6 +112,148 @@ export interface Transaction {
   excludeFromDashboard?: boolean;
 }
 
+// ---------------------------------------------------------------------------
+// Cash Flow (see docs/cash-flow-plan.md). Separate collections from the card
+// side on purpose: every card screen aggregates `transactions` with card
+// semantics, so bank lines live in their own `bankTransactions`.
+// ---------------------------------------------------------------------------
+
+// Column mapping for a bank account's CSV export, saved on the account after
+// the first import. Amounts come in as separate out/in columns (the bank's
+// "Funds Out" / "Funds In"); -1 means unmapped.
+export interface BankImportMapping {
+  dateCol: number;
+  descCol: number;
+  outCol: number;
+  inCol: number;
+  dateFormat: string;
+}
+
+export interface BankAccount {
+  id: string;
+  name: string;
+  institution: string;
+  last4: string;
+  color: string;
+  // Default for each new month's Weekly Spend: this rate times the days in
+  // the period. Each month keeps its own copy (CashFlowMonth.dailySpendRate).
+  dailySpendRate: number;
+  // ISO dates the bank doesn't post on, besides weekends — prefilled from
+  // canadianBankHolidays() and editable, so a wrong date is a data fix.
+  bankHolidays: string[];
+  // The projected low point warns below this balance. 0 means "warn only
+  // when the projection goes negative".
+  lowBalanceThreshold?: number;
+  importMapping?: BankImportMapping;
+}
+
+export type CashFlowKind = "bill" | "deposit";
+
+// "last" is the last day of whatever month it lands in, so short months need
+// no special-casing. A numeric day past the end of a month clamps to it.
+export type DayOfMonth = number | "last";
+
+export type Recurrence =
+  | { type: "monthly"; day: DayOfMonth }
+  | { type: "everyNMonths"; n: number; day: DayOfMonth; anchorMonth: string }
+  | { type: "semiMonthly"; days: [DayOfMonth, DayOfMonth] }
+  | { type: "everyNWeeks"; n: number; anchorDate: string }
+  | { type: "once"; date: string };
+
+// What happens when a due date isn't a business day: bills move forward to
+// the next one, pay moves back (employers pay early).
+export type RollRule = "next" | "previous" | "none";
+
+// Who completes a payment. "manual": you schedule it and record the bank's
+// confirmation number. "auto": the spreadsheet's AD — a pre-authorised debit
+// or direct deposit. "external": the spreadsheet's X — completed by someone
+// else or arriving on its own, so no confirmation number, but still tracked.
+// Only "manual" items ever ask to be scheduled.
+export type Settlement = "manual" | "auto" | "external";
+
+export interface CashFlowItem {
+  id: string;
+  accountId: string;
+  name: string;
+  kind: CashFlowKind;
+  // "variable" items (card payments, utilities) default each new month to
+  // the most recent posted amount instead of defaultAmount.
+  amountMode: "fixed" | "variable";
+  defaultAmount: number; // always positive; kind gives the sign
+  recurrence: Recurrence;
+  roll: RollRule;
+  settlement: Settlement;
+  dateUncertain?: boolean;
+  owner?: string;
+  // Case-insensitive text that identifies this item's bank lines
+  // ("BC HYDRO", "E-TRANSFER SEND <landlord>") for import matching.
+  matchText?: string;
+  active: boolean;
+  notes?: string;
+}
+
+export interface CashFlowPeriod {
+  id: string;
+  endDate: string; // the checkpoint date, inclusive
+  label: string;
+  // Absent means the month's dailySpendRate × days in the period.
+  spendOverride?: number;
+  // The real balance entered at the checkpoint; absent until recorded.
+  actualBalance?: number;
+}
+
+export interface CashFlowMonth {
+  id: string;
+  accountId: string;
+  month: string; // yyyy-mm
+  openingBalance: number;
+  openingSource: "carried" | "manual";
+  dailySpendRate: number;
+  periods: CashFlowPeriod[];
+  closed: boolean;
+  importedFrom?: string; // worksheet name, for months imported from the spreadsheet
+}
+
+export type EntryStatus = "planned" | "scheduled" | "posted" | "skipped";
+
+export interface CashFlowEntry {
+  id: string;
+  monthId: string;
+  itemId: string | null; // null = one-off
+  // `${itemId}:${dueDate}` for generated entries — stops a payment that
+  // rolled across a month boundary from being generated in both months.
+  occurrenceKey?: string;
+  name: string;
+  kind: CashFlowKind;
+  dueDate: string; // nominal
+  postingDate: string; // expected, business-day adjusted
+  postedDate?: string; // actual; once set, decides the period
+  expectedAmount: number;
+  actualAmount?: number;
+  status: EntryStatus;
+  settlement?: Settlement;
+  dateUncertain?: boolean;
+  scheduledDate?: string;
+  confirmationCode?: string;
+  bankTransactionId?: string;
+  notes?: string;
+}
+
+export type BankTxnType = "deposit" | "purchase" | "bill_payment" | "transfer" | "etransfer" | "atm" | "fee" | "interest";
+
+export interface BankTransaction {
+  id: string;
+  accountId: string;
+  date: string;
+  rawDescription: string;
+  amount: number; // always positive; direction gives the sign
+  direction: "in" | "out";
+  type: BankTxnType;
+  childVendorId: string | null;
+  needsReview: boolean;
+  entryId?: string; // the cash-flow entry this line was matched to
+}
+
 export interface AppState {
   cards: Card[];
   categories: Category[];
@@ -119,4 +261,9 @@ export interface AppState {
   parentVendors: ParentVendor[];
   childVendors: ChildVendor[];
   transactions: Transaction[];
+  bankAccounts: BankAccount[];
+  cashFlowItems: CashFlowItem[];
+  cashFlowMonths: CashFlowMonth[];
+  cashFlowEntries: CashFlowEntry[];
+  bankTransactions: BankTransaction[];
 }

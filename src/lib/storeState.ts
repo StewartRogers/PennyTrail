@@ -11,6 +11,11 @@ export function emptyState(): AppState {
     parentVendors: [],
     childVendors: [],
     transactions: [],
+    bankAccounts: [],
+    cashFlowItems: [],
+    cashFlowMonths: [],
+    cashFlowEntries: [],
+    bankTransactions: [],
   };
 }
 
