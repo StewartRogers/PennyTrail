@@ -11,9 +11,16 @@ This block is written and re-added by `next dev` — verify at `node_modules/nex
 ## PennyTrail-specific notes
 
 - **Stack**: Next.js 16.4.2 (App Router), React 19, TypeScript, Tailwind v4,
-  deployed on Vercel (project `pennytrail`, linked in `.vercel/`). It's a
-  single-user personal tool by design — don't introduce multi-user accounts
-  or multi-tenancy without being asked.
+  deployed on Vercel (project `pennytrail`, linked in `.vercel/`, live at
+  https://pennytrail-rsrogers.vercel.app). It's a single-user personal tool
+  by design — don't introduce multi-user accounts or multi-tenancy without
+  being asked.
+- **Pushing to `main` deploys to production.** The GitHub repo is connected
+  to the Vercel project, so a push to `main` ships to the live site the user
+  depends on; other branches get previews. Only push when asked, and have
+  `npm test`, lint, and `next build` green first. `vercel.json` pins
+  `"framework": "nextjs"` — the project was created with the "Other" preset,
+  which served the build as static files (every route 404); don't remove it.
 - **Two storage backends, one document.** `src/lib/store.ts` keeps the whole
   `AppState` as one JSON document: in `data/store.json` locally, and in the
   single `pennytrail_store` row of Neon Postgres when
@@ -23,8 +30,11 @@ This block is written and re-added by `next dev` — verify at `node_modules/nex
   writes the *production* database URL into `.env.local`, so never run a
   local server or script with `PENNYTRAIL_STORAGE=postgres`, `db:import`, or
   any write against that URL without the user asking — it's their live data.
-  Schema changes go in `db/schema.sql` (idempotent) and are applied with
-  `npm run db:migrate` over `DATABASE_URL_UNPOOLED`.
+  Neon is the source of truth since the one-time import; the local
+  `data/store.json` is a stale snapshot, so don't treat it as current or
+  push it up (`db:import -- --force`) unprompted. Schema changes go in
+  `db/schema.sql` (idempotent) and are applied with `npm run db:migrate`
+  over `DATABASE_URL_UNPOOLED` — before the code that needs them deploys.
 - **Sign-in is env-configured, single account** (`src/lib/auth.ts`):
   `PENNYTRAIL_USERNAME`, `PENNYTRAIL_PASSWORD_HASH` (scrypt, colon-delimited
   because Next's .env loader expands `$`), `PENNYTRAIL_SESSION_SECRET`. Off

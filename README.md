@@ -41,6 +41,13 @@ rebinding). It always refuses writes from another site's `Origin` (CSRF), and
 
 ## Deploying to Vercel
 
+PennyTrail is live at **https://pennytrail-rsrogers.vercel.app** (Vercel
+project `pennytrail`, linked in `.vercel/`). The GitHub repo is connected, so
+**every push to `main` deploys to production**; other branches get preview
+deployments. `vercel.json` pins the framework to Next.js — without it the
+project's "Other" preset served the build as static files and every route
+was a 404.
+
 The deployed app runs with two things the local one doesn't need:
 
 - **A database.** Vercel functions can't keep a file between requests, so the
@@ -56,30 +63,39 @@ The deployed app runs with two things the local one doesn't need:
 | Variable | Set by | Notes |
 | --- | --- | --- |
 | `DATABASE_URL`, `DATABASE_URL_UNPOOLED`, … | Neon integration | Pooled URL for the app, direct URL for scripts |
-| `PENNYTRAIL_STORAGE` | already set (`postgres`) | Production + Preview only |
-| `PENNYTRAIL_SESSION_SECRET` | already set (random) | Signs session cookies; changing it signs everyone out |
+| `PENNYTRAIL_STORAGE` | set once (`postgres`) | Production + Preview only |
+| `PENNYTRAIL_SESSION_SECRET` | set once (random) | Signs session cookies; changing it signs everyone out |
 | `PENNYTRAIL_USERNAME` | `npm run auth:setup` | |
 | `PENNYTRAIL_PASSWORD_HASH` | `npm run auth:setup` | scrypt hash — the password itself is never stored |
 
-The project is linked (`.vercel/`) and Neon is provisioned. To go live:
+**The Neon database is the live copy of your data.** It was seeded once from
+`data/store.json` with `npm run db:import`; from then on, changes made in the
+deployed app live only in Neon, and the local file (still used by
+`npm run dev`) falls behind.
+
+Day-to-day:
 
 ```bash
+git push origin main             # deploy to production
+npx vercel deploy                # one-off preview deployment from your working tree
 npx vercel env pull .env.local   # refresh local copies of the env vars
-npm run auth:setup               # choose your username + password (typed hidden)
-npm run db:import                # one-time copy of data/store.json into Neon
-npx vercel --prod                # deploy (or push to a Git-connected branch)
+npm run auth:setup               # change the username/password (then redeploy)
 ```
 
-- `npm run db:migrate` applies `db/schema.sql` (idempotent; `db:import` runs
-  it too). It's already been applied to the provisioned database.
-- `npm run db:import` refuses to overwrite a database that already has data
-  unless you pass `-- --force`. After go-live, the database — not
-  `data/store.json` — is the live copy.
-- To change the password later, run `npm run auth:setup` again and redeploy;
-  that also signs out every existing session. `npm run auth:setup -- --print`
-  prints the settings instead, for trying sign-in locally via `.env.local`.
+- Changing the password (then redeploying) signs out every existing session.
+  `npm run auth:setup -- --print` prints the settings instead, for trying
+  sign-in locally via `.env.local`.
+- `npm run db:migrate` applies `db/schema.sql` (idempotent). Run it before
+  deploying code that needs a schema change.
+- `npm run db:import` refuses to overwrite a database that already has data;
+  `npm run db:import -- --force` replaces the live data with the local file,
+  so only use it deliberately.
 - Preview deployments use the same database and the same sign-in as
-  production.
+  production, and also sit behind Vercel's own login. The production URL is
+  public apart from the app's sign-in.
+- To roll back, promote an earlier deployment in the Vercel dashboard.
+- Runtime logs: `npx vercel logs --deployment <url>` (the Hobby plan keeps
+  about 30 minutes).
 
 ## Testing
 
