@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
+  applyKeyMap,
   buildHistoryImport,
+  summarizeNames,
   cellDate,
   cellMoney,
   excelSerialToIso,
@@ -354,6 +356,63 @@ describe("seedItems", () => {
 
   it("leaves one-offs out", () => {
     expect(seeded.some((s) => s.key === normalizeItemName("RESP Deposit").key)).toBe(false);
+  });
+});
+
+describe("name mapping", () => {
+  const history = syntheticHistory();
+
+  it("summarizes each name with its latest spelling and month count", () => {
+    const names = summarizeNames(history);
+    const pcf = names.find((n) => n.key === normalizeItemName("PCF (Mastercard) - KA").key)!;
+    expect(pcf.name).toBe("PCF (Mastercard) - KA");
+    expect(pcf.months).toBe(13);
+    expect(names.find((n) => n.key === normalizeItemName("RESP Deposit").key)!.months).toBe(1);
+  });
+
+  it("merges one name into another so they're seeded as one item", () => {
+    const resp = normalizeItemName("RESP Deposit").key;
+    const ctb = normalizeItemName("Child Tax Benefit").key;
+    const merged = applyKeyMap(history, { [resp]: ctb });
+    expect(merged.flatMap((m) => m.entries).filter((e) => e.key === resp)).toHaveLength(0);
+    // The original months are untouched.
+    expect(history.flatMap((m) => m.entries).filter((e) => e.key === resp)).toHaveLength(1);
+  });
+
+  it("lets a name seen too rarely to be an item join one", () => {
+    // Four months of a renamed card: two under each name — neither alone is an item.
+    const months: ParsedMonth[] = ["2026-07", "2026-08", "2026-09", "2026-10"].map((m, i) => {
+      const name = i < 2 ? "RBC Mastercard (SR)" : "RBC WESTJET (Mastercard)";
+      const { key, owner } = normalizeItemName(name);
+      return {
+        sheetName: m, month: m, openingBalance: 0, dailySpendRate: 50, warnings: [], balanceMismatches: [],
+        periods: [{ row: 0, endDate: monthEnd(m), label: "End of month", spend: 0 }],
+        entries: [{ row: 1, name, key, ...(owner ? { owner } : {}), kind: "bill" as const, date: `${m}-23`, amount: 100 + i, status: "posted" as const, settlement: "manual" as const }],
+      };
+    });
+    expect(seedItems(months, holidays)).toEqual([]);
+    const oldKey = normalizeItemName("RBC Mastercard (SR)").key;
+    const newKey = normalizeItemName("RBC WESTJET (Mastercard)").key;
+    const seeded = seedItems(applyKeyMap(months, { [oldKey]: newKey }), holidays);
+    expect(seeded).toHaveLength(1);
+    expect(seeded[0]).toMatchObject({ name: "RBC WESTJET (Mastercard)", monthsSeen: 4, owner: "SR", amountMode: "variable", defaultAmount: 103 });
+  });
+
+  it("ignores mappings that point at themselves or at a name that's mapped too", () => {
+    const resp = normalizeItemName("RESP Deposit").key;
+    const ctb = normalizeItemName("Child Tax Benefit").key;
+    const fortis = normalizeItemName("Fortis").key;
+    expect(applyKeyMap(history, { [resp]: resp })).toBe(history);
+    const looped = applyKeyMap(history, { [resp]: ctb, [ctb]: fortis });
+    // resp → ctb is dropped because ctb is itself mapped; ctb → fortis applies.
+    const keys = new Set(looped.flatMap((m) => m.entries).map((e) => e.key));
+    expect(keys.has(resp)).toBe(true);
+    expect(keys.has(ctb)).toBe(false);
+  });
+
+  it("isn't fooled by names like 'constructor'", () => {
+    expect(applyKeyMap(history, { constructor: "x" })).not.toBe(history);
+    expect(applyKeyMap(history, { a: "constructor" })).not.toBe(history);
   });
 });
 

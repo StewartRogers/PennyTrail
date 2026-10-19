@@ -5,7 +5,7 @@ import type { AppState } from "@/lib/types";
 import { importCashFlowHistory } from "@/lib/api";
 import { entriesForMonth, summarizeMonth } from "@/lib/cashflow";
 import { readXlsx, type XlsxCell } from "@/lib/xlsx";
-import { parseBudgetSheet, seedItems, normalizeItemName, type ParsedMonth, type SeededItem } from "@/lib/historyImport";
+import { MIN_MONTHS_FOR_ITEM, applyKeyMap, normalizeItemName, parseBudgetSheet, seedItems, summarizeNames, type ParsedMonth, type SeededItem } from "@/lib/historyImport";
 import { fmtCurrency } from "@/lib/format";
 import { useToast } from "../ToastContext";
 import { PageTitle, PrimaryButton, SecondaryButton } from "../ui";
@@ -74,6 +74,19 @@ export function CashFlowHistory({ appState, onReload, accountId, onOpenMonth }: 
   );
 }
 
+function MergeSelect({ from, targets, onChange, label }: { from: string; targets: SeededItem[]; onChange: (from: string, to: string) => void; label: string }) {
+  return (
+    <select aria-label={`${label} is the same item as`} value="" onChange={(e) => onChange(from, e.target.value)} style={{ border: "1px solid var(--border)", borderRadius: 6, padding: "3px 4px", fontSize: 12, background: "var(--panel)", color: "var(--text)", maxWidth: 220 }}>
+      <option value="">—</option>
+      {targets.map((t) => (
+        <option key={t.key} value={t.key}>
+          {t.name}
+        </option>
+      ))}
+    </select>
+  );
+}
+
 // Keeps what the server needs: cell values only, rows trimmed of trailing
 // blanks, and trailing empty rows dropped.
 function compactRows(rows: XlsxCell[][]): XlsxCell[][] {
@@ -100,6 +113,7 @@ function HistoryImport({ appState, accountId, onReload, onClose }: { appState: A
   const [loaded, setLoaded] = useState<Loaded | null>(null);
   const [reading, setReading] = useState(false);
   const [oneOff, setOneOff] = useState<Set<string>>(new Set());
+  const [keyMap, setKeyMap] = useState<Record<string, string>>({});
   const [open, setOpen] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const today = todayIso();
@@ -107,7 +121,25 @@ function HistoryImport({ appState, accountId, onReload, onClose }: { appState: A
   const existingMonths = new Set(appState.cashFlowMonths.filter((m) => m.accountId === accountId).map((m) => m.month));
   const existingItemKeys = new Set(appState.cashFlowItems.filter((i) => i.accountId === accountId).map((i) => normalizeItemName(i.name).key));
 
-  const seeded: SeededItem[] = useMemo(() => (loaded ? seedItems(loaded.parsed, new Set(account.bankHolidays)) : []), [loaded, account.bankHolidays]);
+  // The same mapping the server applies, so the preview shows what will be saved.
+  const mapped = useMemo(() => (loaded ? applyKeyMap(loaded.parsed, keyMap) : []), [loaded, keyMap]);
+  const seeded: SeededItem[] = useMemo(() => seedItems(mapped, new Set(account.bankHolidays)), [mapped, account.bankHolidays]);
+  const names = useMemo(() => (loaded ? summarizeNames(loaded.parsed) : []), [loaded]);
+  const rareNames = names.filter((n) => n.months < MIN_MONTHS_FOR_ITEM);
+  const mergedInto = (key: string) => {
+    const target = keyMap[key];
+    return target ? names.find((n) => n.key === target)?.name : undefined;
+  };
+  const setMerge = (from: string, to: string) =>
+    setKeyMap((prev) => {
+      const next = { ...prev };
+      if (to) {
+        next[from] = to;
+        // Names already merged into `from` follow it, so mappings never chain.
+        for (const k of Object.keys(next)) if (next[k] === from) next[k] = to;
+      } else delete next[from];
+      return next;
+    });
 
   async function onFile(file: File) {
     setReading(true);
@@ -123,6 +155,7 @@ function HistoryImport({ appState, accountId, onReload, onClose }: { appState: A
       parsed.sort((a, b) => (a.month < b.month ? -1 : 1));
       setLoaded({ fileName: file.name, sheets, parsed, errors });
       setOneOff(new Set());
+      setKeyMap({});
     } catch (err) {
       pushToast(errorMessage(err, "Couldn't read that file"));
     } finally {
@@ -139,6 +172,7 @@ function HistoryImport({ appState, accountId, onReload, onClose }: { appState: A
         accountId,
         sheets: loaded.sheets.filter((s) => months.has(s.name)),
         oneOffKeys: [...oneOff],
+        keyMap,
         today,
       });
       await onReload();
@@ -263,6 +297,7 @@ function HistoryImport({ appState, accountId, onReload, onClose }: { appState: A
                   <th style={{ ...thStyle, textAlign: "right" }}>Amount</th>
                   <th style={thStyle}>Completed by</th>
                   <th style={thStyle}>Months</th>
+                  <th style={thStyle}>Same item as</th>
                 </tr>
               </thead>
               <tbody>
@@ -298,12 +333,49 @@ function HistoryImport({ appState, accountId, onReload, onClose }: { appState: A
                       </td>
                       <td style={tdStyle}>{SETTLEMENT_LABELS[s.settlement]}</td>
                       <td style={tdStyle}>{s.monthsSeen}</td>
+                      <td style={tdStyle}>
+                        <MergeSelect from={s.key} targets={seeded.filter((t) => t.key !== s.key && !keyMap[t.key])} onChange={setMerge} label={s.name} />
+                      </td>
                     </tr>
                   );
                 })}
               </tbody>
             </table>
           </div>
+
+          {Object.keys(keyMap).length > 0 && (
+            <div style={{ fontSize: 12.5, marginBottom: 12 }}>
+              <div style={{ fontWeight: 600, marginBottom: 4 }}>Treated as one item</div>
+              {Object.keys(keyMap).map((from) => (
+                <div key={from} style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 3 }}>
+                  “{names.find((n) => n.key === from)?.name ?? from}” → “{mergedInto(from)}”
+                  <button onClick={() => setMerge(from, "")} style={{ border: "none", background: "none", color: "var(--accent)", padding: 0, fontSize: 12.5, textDecoration: "underline" }}>
+                    undo
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {rareNames.filter((n) => !keyMap[n.key]).length > 0 && (
+            <details style={{ marginBottom: 16 }}>
+              <summary style={{ fontSize: 13, cursor: "pointer" }}>
+                {rareNames.filter((n) => !keyMap[n.key]).length} names seen in fewer than {MIN_MONTHS_FOR_ITEM} months — imported as one-off rows unless you say they&apos;re the same as an item above
+              </summary>
+              <div style={{ display: "flex", flexDirection: "column", gap: 4, marginTop: 8 }}>
+                {rareNames
+                  .filter((n) => !keyMap[n.key])
+                  .map((n) => (
+                    <div key={n.key} style={{ display: "flex", gap: 10, alignItems: "center", fontSize: 12.5 }}>
+                      <span style={{ minWidth: 240 }}>
+                        {n.name} <span style={{ color: "var(--muted)" }}>({n.months} month{n.months === 1 ? "" : "s"})</span>
+                      </span>
+                      <MergeSelect from={n.key} targets={seeded.filter((t) => !keyMap[t.key])} onChange={setMerge} label={n.name} />
+                    </div>
+                  ))}
+              </div>
+            </details>
+          )}
 
           <div style={{ display: "flex", gap: 8 }}>
             <PrimaryButton onClick={runImport} disabled={saving || toImport.length === 0 || duplicateMonths.length > 0}>

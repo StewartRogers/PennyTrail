@@ -3,7 +3,7 @@ import { updateState } from "@/lib/store";
 import { uid } from "@/lib/id";
 import { readJsonObject, readString } from "@/lib/request";
 import { readIsoDate } from "@/lib/cashflowRequest";
-import { buildHistoryImport, parseBudgetSheet, seedItems, type ParsedMonth, type SheetCell } from "@/lib/historyImport";
+import { applyKeyMap, buildHistoryImport, parseBudgetSheet, seedItems, type ParsedMonth, type SheetCell } from "@/lib/historyImport";
 import { toISODate } from "@/lib/format";
 import { refreshOpeningsFrom } from "@/lib/cashflowState";
 
@@ -53,19 +53,28 @@ export async function POST(request: Request) {
   // still planned; the server's clock may sit in another timezone.
   const today = body.today === undefined ? toISODate(new Date()) : readIsoDate(body.today);
   const oneOffKeys = Array.isArray(body.oneOffKeys) && body.oneOffKeys.every((k: unknown) => typeof k === "string") ? new Set<string>(body.oneOffKeys) : body.oneOffKeys === undefined ? new Set<string>() : null;
+  // "Same item as…" choices: name key → the key it merges into.
+  const keyMap =
+    body.keyMap === undefined
+      ? {}
+      : body.keyMap !== null && typeof body.keyMap === "object" && !Array.isArray(body.keyMap) && Object.keys(body.keyMap).length <= 1000 && Object.values(body.keyMap).every((v) => typeof v === "string")
+        ? (body.keyMap as Record<string, string>)
+        : null;
 
   if (!accountId) return NextResponse.json({ error: "accountId is required" }, { status: 400 });
   if (!sheets) return NextResponse.json({ error: "sheets must be a list of { name, rows } with plain cell values" }, { status: 400 });
   if (!today) return NextResponse.json({ error: "today must be yyyy-mm-dd" }, { status: 400 });
   if (!oneOffKeys) return NextResponse.json({ error: "oneOffKeys must be a list of names" }, { status: 400 });
+  if (!keyMap) return NextResponse.json({ error: "keyMap must map names to names" }, { status: 400 });
 
-  const parsed: ParsedMonth[] = [];
+  let parsed: ParsedMonth[] = [];
   const sheetErrors: { sheetName: string; error: string }[] = [];
   for (const sheet of sheets) {
     const result = parseBudgetSheet(sheet.name, sheet.rows, today);
     if (result.ok) parsed.push(result.month);
     else sheetErrors.push({ sheetName: result.sheetName, error: result.error });
   }
+  parsed = applyKeyMap(parsed, keyMap);
   const months = new Set<string>();
   for (const m of parsed) {
     if (months.has(m.month)) return NextResponse.json({ error: `Two sheets are both ${m.month}` }, { status: 400 });

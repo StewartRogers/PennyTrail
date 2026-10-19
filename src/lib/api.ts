@@ -269,6 +269,7 @@ export function importCashFlowHistory(input: {
   accountId: string;
   sheets: { name: string; rows: (string | number | boolean | null)[][] }[];
   oneOffKeys: string[];
+  keyMap: Record<string, string>;
   today: string;
 }): Promise<{ importedMonths: number; entries: number; items: number; skippedMonths: string[]; sheetErrors: { sheetName: string; error: string }[] }> {
   return request("/api/cashflow/history-import", { method: "POST", body: JSON.stringify(input) });

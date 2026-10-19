@@ -2,6 +2,41 @@
 
 Branch: `cash-flow` (created from `main` at `8180052`).
 
+## Status (2026-10-19)
+
+Phases 1–5 are built on the `cash-flow` branch, committed locally and not
+pushed. Phase 6 (syncing with the card side) is still to do. `npm test`
+(759 tests), lint, and `next build` all pass.
+
+Still needed before this branch is pushed:
+
+- **Phase 0's separate Preview database.** Previews still share the
+  production database, so pushing `cash-flow` would run this code against
+  live data. That's a Vercel/Neon change, and it hasn't been made.
+
+Changes from the plan as written:
+
+- **The bank import is its own screen** (Import Bank CSV), not a mode of the
+  card Import wizard, so the card side is untouched. Its column mapping is
+  saved on the bank account (`BankAccount.importMapping`), not as a
+  `Template`. Import Templates stays on the Credit Cards side, and only
+  Categories and Vendor Mappings moved to Shared.
+- **The .xlsx reader is built in** (`src/lib/xlsx.ts`) instead of `exceljs`.
+  It uses the browser's own DecompressionStream and needs no new
+  dependency.
+- **The import preview has a "Same item as…" mapping** (`keyMap`) for
+  renamed cards that the name normaliser can't join on its own, such as
+  "RBC Mastercard (SR)" → "RBC WESTJET (Mastercard)".
+- **Recurring items are created for names seen in at least three months.**
+  Names seen in fewer months import as one-off rows unless they're mapped
+  to an item.
+- **Upcoming flags an item as overdue once its date passes without
+  posting.** Scheduled items count too, because done means posted.
+
+The dry run against the real workbook through the connector (all 35
+sheets) confirmed that every sheet has the same row 1 headings and the same
+Weekly Spend / END OF WEEK / END OF MONTH labels.
+
 ## 1. Goal
 
 PennyTrail today reviews credit card spending in detail: CSV import, vendor

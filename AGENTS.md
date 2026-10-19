@@ -99,6 +99,20 @@ This block is written and re-added by `next dev` — verify at `node_modules/nex
   after the payment and cashback keywords, any other credit-side line is a
   `credit` (a merchant refund often carries nothing but the merchant name),
   so it offsets spend instead of vanishing as a `payment`.
+- **Cash Flow is a second side of the app, kept apart from the card side**
+  (`docs/cash-flow-plan.md`). Its collections — `bankAccounts`,
+  `cashFlowItems`, `cashFlowMonths`, `cashFlowEntries`, `bankTransactions` —
+  never feed the card screens, which aggregate `transactions` only; debit
+  purchases share just the vendor/category layer. All balance math lives in
+  pure modules (`src/lib/cashflow.ts`, `businessDays.ts`, `recurrence.ts`,
+  `bankMatching.ts`, `bankSpending.ts`) and runs in integer cents — keep it
+  there and keep it tested. Months are materialized: editing a recurring item
+  never rewrites past months. An entry counts in the month and period of its
+  posted date (else its business-day-adjusted posting date). A month whose
+  `openingSource` is `"carried"` follows the previous month's close, so any
+  route that changes a month must call `refreshOpeningsFrom` (see
+  `src/lib/cashflowState.ts`). Deleting a month needs `{ confirm: true }`;
+  wiping bank lines needs `{ all: true }`.
 - **Design fidelity**: the UI was ported from a Claude Design handoff
   (dashboard, import wizard, transactions, categories, cards, templates
   screens) — OKLCH color tokens, Public Sans + IBM Plex Mono fonts, exact

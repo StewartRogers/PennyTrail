@@ -388,6 +388,50 @@ export function parseBudgetSheet(sheetName: string, rows: SheetCell[][], today: 
 }
 
 // ---------------------------------------------------------------------------
+// Name mapping
+// ---------------------------------------------------------------------------
+
+export interface NameSummary {
+  key: string;
+  name: string; // the most recent spelling
+  months: number;
+}
+
+// Every distinct item name across the sheets, newest spelling first by
+// recency, for the "same item as…" mapping step.
+export function summarizeNames(months: ParsedMonth[]): NameSummary[] {
+  const byKey = new Map<string, { name: string; latest: string; months: Set<string> }>();
+  for (const m of months) {
+    for (const e of m.entries) {
+      if (!e.key) continue;
+      const s = byKey.get(e.key) ?? { name: e.name, latest: "", months: new Set<string>() };
+      if (e.date >= s.latest) {
+        s.latest = e.date;
+        s.name = e.name;
+      }
+      s.months.add(m.month);
+      byKey.set(e.key, s);
+    }
+  }
+  return [...byKey.entries()]
+    .map(([key, s]) => ({ key, name: s.name, months: s.months.size }))
+    .sort((a, b) => a.name.localeCompare(b.name));
+}
+
+// Renames keys so names the user says are one item ("RBC Mastercard (SR)"
+// → "RBC WESTJET (Mastercard)") count together. One level only: a mapping
+// whose target is itself mapped elsewhere, or that points at itself, is
+// ignored, so no mapping can loop.
+export function applyKeyMap(months: ParsedMonth[], keyMap: Record<string, string>): ParsedMonth[] {
+  const valid = new Map<string, string>();
+  for (const [from, to] of Object.entries(keyMap)) {
+    if (from !== to && !Object.hasOwn(keyMap, to)) valid.set(from, to);
+  }
+  if (valid.size === 0) return months;
+  return months.map((m) => ({ ...m, entries: m.entries.map((e) => (valid.has(e.key) ? { ...e, key: valid.get(e.key)! } : e)) }));
+}
+
+// ---------------------------------------------------------------------------
 // Recurring items from the history
 // ---------------------------------------------------------------------------
 

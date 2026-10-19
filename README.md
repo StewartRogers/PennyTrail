@@ -165,6 +165,35 @@ Two invariants worth knowing if you touch the store or the routes:
 - **Import Templates** — view/manage saved CSV column-mapping templates,
   reused automatically for future statements from the same bank.
 
+### Cash Flow
+
+The sidebar switches between **Credit Cards** (the screens above) and
+**Cash Flow**, a month-by-month projection of one bank account's balance
+that replaces the monthly bill-tracking spreadsheet. Categories and Vendor
+Mappings are shared by both sides. The design is in
+[`docs/cash-flow-plan.md`](docs/cash-flow-plan.md).
+
+- **This Month** — the spreadsheet view: three periods ending on the first
+  Friday, second Friday, and month end, each opening with a Weekly Spend of
+  the daily rate × its days, then its bills and deposits (status, scheduled
+  date, confirmation number, running balance), then the checkpoint where the
+  real balance is entered and the variance shows. Payments land on their
+  business-day posting date (weekends and the account's bank holidays).
+- **Upcoming** — overdue, needs scheduling, scheduled-but-not-posted, and
+  expected items across months. Done means posted.
+- **Spending** — debit spending from imported bank lines per period, next to
+  the estimate and the spend implied by each checkpoint.
+- **Bank Transactions / Import Bank CSV** — the chequing export (Date,
+  Transaction Details, Funds Out, Funds In), classified from its details
+  prefixes, with suggested matches to planned entries.
+- **Recurring Items** — bills and deposits and their schedules (monthly, twice
+  a month, every N months, every N weeks, once). Edits apply to months
+  started afterwards.
+- **History** — every month's totals, plus the one-time import of the
+  spreadsheet workbook (.xlsx, one sheet per month) with a preview.
+- **Accounts** — the bank account, its daily spend rate, low-balance
+  warning, and bank holiday list.
+
 ## Project structure
 
 - `src/lib/` — framework-agnostic business logic: CSV parsing

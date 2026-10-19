@@ -73,11 +73,41 @@ describe("POST /api/cashflow/history-import", () => {
     [{ sheets: [{ name: "Oct 26", rows: [["x".repeat(1001)]] }] }],
     [{ today: "18/10/2026" }],
     [{ oneOffKeys: "rent" }],
+    [{ keyMap: ["rent"] }],
+    [{ keyMap: { rent: 5 } }],
   ])("rejects a malformed request %#", async (override) => {
     const { body: account } = await createAccount();
     const res = await importHistory({ accountId: account.id, sheets: sheets(), today: "2026-10-18", ...override });
     expect(res.status).toBe(400);
     expect((await readStore()).cashFlowMonths).toHaveLength(0);
+  });
+
+  it("applies 'same item as' mappings before creating items", async () => {
+    const { body: account } = await createAccount();
+    // Three months of pay under two spellings; merged, they're one item.
+    const sheet = (month: number, payName: string) => [
+      ["", "DATE", "CREDIT", "DEBIT", "$1,000.00", "NOTES", "DAY", "", "YEAR", "2026", "MONTH", String(month)],
+      ["Weekly Spend", `01-${["Jul", "Aug", "Sep"][month - 7]}-26`, "$0.00", "", "$1,000.00", "AD", "1"],
+      [payName, `15-${["Jul", "Aug", "Sep"][month - 7]}-26`, "", "$100.00", "$1,100.00", "AD", "15"],
+      ["END OF MONTH", `28-${["Jul", "Aug", "Sep"][month - 7]}-26`, "", "", "$1,100.00", "0.00", "28"],
+    ];
+    const sheets = [
+      { name: "Jul 26", rows: sheet(7, "Kerri Salary") },
+      { name: "Aug 26", rows: sheet(8, "Kerri Pay") },
+      { name: "Sep 26", rows: sheet(9, "Kerri Pay") },
+    ];
+    const { normalizeItemName } = await import("@/lib/historyImport");
+    const keyMap = { [normalizeItemName("Kerri Salary").key]: normalizeItemName("Kerri Pay").key };
+    const without = await importHistory({ accountId: account.id, sheets, today: "2026-10-18" });
+    expect(without.body.items).toBe(0);
+    const { body: other } = await createAccount({ name: "Other" });
+    const withMap = await importHistory({ accountId: other.id, sheets, keyMap, today: "2026-10-18" });
+    expect(withMap.body.items).toBe(1);
+    const state = await readStore();
+    const item = state.cashFlowItems.find((i) => i.accountId === other.id)!;
+    expect(item.name).toBe("Kerri Pay");
+    const monthIds = new Set(state.cashFlowMonths.filter((m) => m.accountId === other.id).map((m) => m.id));
+    expect(state.cashFlowEntries.filter((e) => monthIds.has(e.monthId)).every((e) => e.itemId === item.id)).toBe(true);
   });
 
   it("rejects an unknown account", async () => {
