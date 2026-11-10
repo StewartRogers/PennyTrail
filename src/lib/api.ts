@@ -233,8 +233,9 @@ export function updateCashFlowMonth(
     addPeriod?: { endDate: string };
     removePeriodId?: string;
     regenerate?: boolean;
+    resetStatuses?: boolean;
   }
-): Promise<{ month: CashFlowMonth; generated: number }> {
+): Promise<{ month: CashFlowMonth; generated: number; reset: number }> {
   return request(`/api/cashflow/months/${id}`, { method: "PATCH", body: JSON.stringify(patch) });
 }
 

@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import type { AppState, BankImportMapping } from "@/lib/types";
 import { importBankTransactions, updateBankAccount, type BankImportRow } from "@/lib/api";
 import { guessMapping, parseAmount, parseCSV, parseDateFlexible } from "@/lib/csv";
@@ -50,6 +50,7 @@ export function BankImport({ appState, onReload, accountId, onGoTransactions }: 
   const pushToast = useToast();
   const account = appState.bankAccounts.find((a) => a.id === accountId)!;
   const [fileName, setFileName] = useState("");
+  const fileInput = useRef<HTMLInputElement>(null);
   const [lines, setLines] = useState<string[][] | null>(null);
   const [mapping, setMapping] = useState<BankImportMapping | null>(null);
   const [saving, setSaving] = useState(false);
@@ -113,7 +114,23 @@ export function BankImport({ appState, onReload, accountId, onGoTransactions }: 
         Import {account.name}&apos;s CSV export (Date, Transaction Details, Funds Out, Funds In). Lines are sorted into pay, e-transfers, debit purchases, bill
         payments, and so on from their details text; lines already imported are skipped.
       </div>
-      <input aria-label="Bank CSV file" type="file" accept=".csv,text/csv" onChange={(e) => e.target.files?.[0] && onFile(e.target.files[0])} />
+      <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+        <SecondaryButton onClick={() => fileInput.current?.click()}>{fileName ? "Choose a different file" : "Choose .csv file"}</SecondaryButton>
+        <span style={{ fontSize: 13.5, color: fileName ? "var(--text)" : "var(--muted)", overflowWrap: "anywhere" }}>{fileName || "No file chosen"}</span>
+        <input
+          ref={fileInput}
+          aria-label="Bank CSV file"
+          type="file"
+          accept=".csv,text/csv"
+          onChange={(e) => {
+            const file = e.target.files?.[0];
+            // Cleared so picking the same file again still fires onChange.
+            e.target.value = "";
+            if (file) onFile(file);
+          }}
+          style={{ display: "none" }}
+        />
+      </div>
 
       {lines && mapping && parsed && !result && (
         <div style={{ marginTop: 18 }}>

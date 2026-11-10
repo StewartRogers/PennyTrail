@@ -1,6 +1,6 @@
 "use client";
 
-import { Fragment, useMemo, useState } from "react";
+import { Fragment, useMemo, useRef, useState } from "react";
 import type { AppState } from "@/lib/types";
 import { importCashFlowHistory } from "@/lib/api";
 import { entriesForMonth, summarizeMonth } from "@/lib/cashflow";
@@ -112,6 +112,8 @@ function HistoryImport({ appState, accountId, onReload, onClose }: { appState: A
   const pushToast = useToast();
   const [loaded, setLoaded] = useState<Loaded | null>(null);
   const [reading, setReading] = useState(false);
+  const [chosenName, setChosenName] = useState("");
+  const fileInput = useRef<HTMLInputElement>(null);
   const [oneOff, setOneOff] = useState<Set<string>>(new Set());
   const [keyMap, setKeyMap] = useState<Record<string, string>>({});
   const [open, setOpen] = useState<string | null>(null);
@@ -142,6 +144,7 @@ function HistoryImport({ appState, accountId, onReload, onClose }: { appState: A
     });
 
   async function onFile(file: File) {
+    setChosenName(file.name);
     setReading(true);
     try {
       const sheets = (await readXlsx(await file.arrayBuffer())).filter((s) => !s.hidden).map((s) => ({ name: s.name, rows: compactRows(s.rows) }));
@@ -195,8 +198,28 @@ function HistoryImport({ appState, accountId, onReload, onClose }: { appState: A
         In Google Sheets choose <b>File → Download → Microsoft Excel (.xlsx)</b>, then pick that file here. Each worksheet becomes a month: Weekly Spend rows set each period&apos;s
         spend, END OF WEEK rows its recorded balance, and every other row an entry. Nothing is saved until you import, and months you already have are never overwritten.
       </div>
-      <input aria-label="Workbook file" type="file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" disabled={reading} onChange={(e) => e.target.files?.[0] && onFile(e.target.files[0])} />
-      {reading && <div style={{ fontSize: 13, color: "var(--muted)", marginTop: 8 }}>Reading…</div>}
+      <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+        <SecondaryButton onClick={() => fileInput.current?.click()} disabled={reading}>
+          {chosenName ? "Choose a different file" : "Choose .xlsx file"}
+        </SecondaryButton>
+        <span style={{ fontSize: 13.5, color: chosenName ? "var(--text)" : "var(--muted)", overflowWrap: "anywhere" }}>
+          {reading ? `Reading ${chosenName}…` : chosenName || "No file chosen"}
+        </span>
+        <input
+          ref={fileInput}
+          aria-label="Workbook file"
+          type="file"
+          accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+          disabled={reading}
+          onChange={(e) => {
+            const file = e.target.files?.[0];
+            // Cleared so picking the same file again still fires onChange.
+            e.target.value = "";
+            if (file) onFile(file);
+          }}
+          style={{ display: "none" }}
+        />
+      </div>
 
       {loaded && (
         <div style={{ marginTop: 16 }}>

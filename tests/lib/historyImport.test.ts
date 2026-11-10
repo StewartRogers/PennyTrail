@@ -133,8 +133,8 @@ describe("parseBudgetSheet", () => {
     expect([byRow(23).kind, byRow(23).amount]).toEqual(["bill", 0]); // "$0.00" in CREDIT
   });
 
-  it("maps the notes column to status, settlement, and confirmation number", () => {
-    const m = parseOk("Oct 26");
+  it("maps a past month's notes column to status, settlement, and confirmation number", () => {
+    const m = parseOk("Oct 26", octoberSheet(), "2026-11-05");
     const pick = (e: ParsedEntry) => [e.name, e.status, e.settlement, e.confirmationCode];
     expect(m.entries.map(pick)).toEqual([
       ["152 Rent (first)", "posted", "manual", undefined], // 9999999999 is a placeholder
@@ -147,15 +147,22 @@ describe("parseBudgetSheet", () => {
       ["152 Home Insurance", "posted", "auto", undefined],
       ["Stewart Pay", "posted", "auto", undefined],
       ["Kerri Pay", "posted", "auto", undefined],
-      ["AMEX", "scheduled", "manual", "136258"],
+      ["AMEX", "posted", "manual", "136258"],
       ["PCF (Mastercard) - KA", "skipped", "external", undefined],
-      ["Child Tax Benefit", "planned", "external", undefined],
-      ["BC Hydro", "scheduled", "manual", "136266"],
-      ["Stewart Pay", "planned", "auto", undefined],
+      ["Child Tax Benefit", "posted", "external", undefined],
+      ["BC Hydro", "posted", "manual", "136266"],
+      ["Stewart Pay", "posted", "auto", undefined],
       ["Wealthsimple (Visa)", "skipped", "external", undefined],
-      ["Kerri Pay", "planned", "auto", undefined],
-      ["152 Rent (first)", "scheduled", "manual", "6156431232"],
+      ["Kerri Pay", "posted", "auto", undefined],
+      ["152 Rent (first)", "posted", "manual", "6156431232"],
     ]);
+  });
+
+  it("brings the current month in all Planned, still reading settlement and confirmation number", () => {
+    const m = parseOk("Oct 26"); // today is 2026-10-18
+    expect(m.entries.every((e) => e.status === "planned")).toBe(true);
+    const byName = (name: string) => m.entries.find((e) => e.name === name)!;
+    expect([byName("RBC AVION (Visa)").settlement, byName("AMEX").confirmationCode]).toEqual(["external", "136258"]);
   });
 
   it("keeps notes and reads the scheduling date from them", () => {
@@ -354,6 +361,12 @@ describe("seedItems", () => {
     expect(byName("Fortis").active).toBe(true);
   });
 
+  it("still sees the cancellation when the newest month came in all Planned", () => {
+    const months = syntheticHistory().map((m) => ({ ...m, entries: m.entries.map((e) => ({ ...e, status: "planned" as const })) }));
+    const rbc = seedItems(months, holidays).find((s) => s.key === normalizeItemName("RBC AVION (Visa)").key)!;
+    expect(rbc.active).toBe(false);
+  });
+
   it("leaves one-offs out", () => {
     expect(seeded.some((s) => s.key === normalizeItemName("RESP Deposit").key)).toBe(false);
   });
@@ -478,15 +491,20 @@ describe("buildHistoryImport", () => {
     expect(plan.months[0].periods.map((p) => p.spendOverride)).toEqual([undefined, 400, undefined]);
   });
 
-  it("creates entries with posted amounts and dates", () => {
+  it("creates a past month's entries with posted amounts and dates", () => {
+    const plan = build();
+    const sep = plan.months[0];
+    const posted = plan.entries.filter((e) => e.monthId === sep.id && e.status === "posted");
+    expect(posted.length).toBeGreaterThan(0);
+    for (const e of posted) expect(e).toMatchObject({ postedDate: e.postingDate, actualAmount: e.expectedAmount });
+  });
+
+  it("creates the current month's entries all Planned, keeping confirmation numbers", () => {
     const plan = build();
     const oct = plan.months[1];
+    expect(plan.entries.filter((e) => e.monthId === oct.id).every((e) => e.status === "planned" && e.postedDate === undefined && e.actualAmount === undefined)).toBe(true);
     const rent2 = plan.entries.find((e) => e.monthId === oct.id && e.name === "152 Rent (second)")!;
-    expect(rent2).toMatchObject({ status: "posted", postedDate: "2026-10-01", actualAmount: 2000, confirmationCode: "106126052602", itemId: null });
-    const amex = plan.entries.find((e) => e.name === "AMEX")!;
-    expect(amex).toMatchObject({ status: "scheduled", expectedAmount: 1571.06, postingDate: "2026-10-19" });
-    expect(amex.actualAmount).toBeUndefined();
-    expect(amex.postedDate).toBeUndefined();
+    expect(rent2).toMatchObject({ expectedAmount: 2000, postingDate: "2026-10-01", confirmationCode: "106126052602", itemId: null });
   });
 
   it("links entries to seeded items and creates those items", () => {

@@ -10,7 +10,7 @@ import {
   updateCashFlowEntry,
   updateCashFlowMonth,
 } from "@/lib/api";
-import { entriesForMonth, entryDate, isOverdue, summarizeMonth, type EntryRow, type PeriodSummary } from "@/lib/cashflow";
+import { entriesForMonth, entryAmount, entryDate, isOverdue, summarizeMonth, type EntryRow, type PeriodSummary } from "@/lib/cashflow";
 import { suggestCheckpointBalances, type CheckpointSuggestion } from "@/lib/bankMatching";
 import { addMonths } from "@/lib/dates";
 import { isValidIsoDate } from "@/lib/request";
@@ -20,10 +20,8 @@ import { PageTitle, PrimaryButton, inputStyle, labelStyle } from "../ui";
 import {
   ConfirmButton,
   MoneyCell,
-  SETTLEMENT_LABELS,
   STATUS_LABELS,
   SmallButton,
-  StatTile,
   Tag,
   TextCell,
   errorMessage,
@@ -31,7 +29,6 @@ import {
   monthsForAccount,
   parseMoneyInput,
   shortDate,
-  signedAmount,
   statusColor,
   tdStyle,
   thStyle,
@@ -40,7 +37,6 @@ import {
 } from "./shared";
 
 type Run = (action: () => Promise<unknown>, success?: string) => Promise<void>;
-
 function useRun(onReload: () => Promise<void>): Run {
   const pushToast = useToast();
   return async (action, success) => {
@@ -71,7 +67,6 @@ export function CashFlowMonthView({
   onGoHistory: () => void;
 }) {
   const run = useRun(onReload);
-  const account = appState.bankAccounts.find((a) => a.id === accountId)!;
   const months = monthsForAccount(appState.cashFlowMonths, accountId);
   const month = months.find((m) => m.month === monthKey);
   const today = todayIso();
@@ -103,7 +98,7 @@ export function CashFlowMonthView({
       </div>
 
       {month ? (
-        <StartedMonth appState={appState} month={month} run={run} today={today} threshold={account.lowBalanceThreshold ?? 0} />
+        <StartedMonth appState={appState} month={month} run={run} today={today} />
       ) : (
         <StartMonthPanel appState={appState} accountId={accountId} monthKey={monthKey} run={run} hasAnyMonth={months.length > 0} onGoHistory={onGoHistory} />
       )}
@@ -130,12 +125,14 @@ function StartMonthPanel({
   const carried = previous ? summarizeMonth(previous, entriesForMonth(appState.cashFlowEntries, previous.id)).closingBalance : null;
   const [opening, setOpening] = useState("");
   const itemCount = appState.cashFlowItems.filter((i) => i.accountId === accountId && i.active).length;
-  const parsed = opening.trim() ? parseMoneyInput(opening) : null;
+  // With a previous month the opening is always its close; only the first
+  // month takes a balance by hand.
+  const parsed = carried === null && opening.trim() ? parseMoneyInput(opening) : null;
   const canStart = carried !== null || parsed !== null;
 
   async function start() {
     await run(
-      () => startCashFlowMonth({ accountId, month: monthKey, ...(parsed !== null ? { openingBalance: parsed } : {}) }),
+      () => startCashFlowMonth({ accountId, month: monthKey, ...(carried === null && parsed !== null ? { openingBalance: parsed } : {}) }),
       `Started ${longMonthLabel(monthKey)}`
     ).catch(() => {});
   }
@@ -156,93 +153,92 @@ function StartMonthPanel({
           </>
         )}
       </div>
-      <div style={labelStyle}>Opening balance</div>
-      <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-        <input
-          aria-label="Opening balance"
-          value={opening}
-          onChange={(e) => setOpening(e.target.value)}
-          placeholder={carried !== null ? carried.toFixed(2) : "0.00"}
-          inputMode="decimal"
-          style={{ ...inputStyle, width: 140, fontFamily: "var(--mono)" }}
-        />
-        <PrimaryButton onClick={start} disabled={!canStart}>
-          Start {longMonthLabel(monthKey)}
-        </PrimaryButton>
-      </div>
-      <div style={{ fontSize: 12, color: "var(--muted)", marginTop: 8 }}>
-        {carried !== null
-          ? `Leave blank to carry ${fmtCurrency(carried)} from ${longMonthLabel(previous!.month)}'s close.`
-          : "There's no previous month to carry from, so enter the account's balance at the start of the month."}
-      </div>
+      {carried !== null ? (
+        <>
+          <div style={{ fontSize: 13, marginBottom: 12 }}>
+            Opens with <b style={{ fontFamily: "var(--mono)" }}>{fmtCurrency(carried)}</b>, {longMonthLabel(previous!.month)}&apos;s closing balance.
+          </div>
+          <PrimaryButton onClick={start}>Start {longMonthLabel(monthKey)}</PrimaryButton>
+        </>
+      ) : (
+        <>
+          <div style={labelStyle}>Opening balance</div>
+          <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+            <input
+              aria-label="Opening balance"
+              value={opening}
+              onChange={(e) => setOpening(e.target.value)}
+              placeholder="0.00"
+              inputMode="decimal"
+              style={{ ...inputStyle, width: 140, fontFamily: "var(--mono)" }}
+            />
+            <PrimaryButton onClick={start} disabled={!canStart}>
+              Start {longMonthLabel(monthKey)}
+            </PrimaryButton>
+          </div>
+          <div style={{ fontSize: 12, color: "var(--muted)", marginTop: 8 }}>
+            There&apos;s no previous month to carry from, so enter the account&apos;s balance at the start of the month.
+          </div>
+        </>
+      )}
     </div>
   );
 }
 
-function StartedMonth({ appState, month, run, today, threshold }: { appState: AppState; month: CashFlowMonth; run: Run; today: string; threshold: number }) {
+function StartedMonth({ appState, month, run, today }: { appState: AppState; month: CashFlowMonth; run: Run; today: string }) {
   const entries = entriesForMonth(appState.cashFlowEntries, month.id);
   const summary = summarizeMonth(month, entries);
   const suggestions = new Map(
     suggestCheckpointBalances({ month, months: appState.cashFlowMonths, bankTransactions: appState.bankTransactions }).map((s) => [s.periodId, s])
   );
-  const previousExists = appState.cashFlowMonths.some((m) => m.accountId === month.accountId && m.month === addMonths(month.month, -1));
+  const previous = appState.cashFlowMonths.find((m) => m.accountId === month.accountId && m.month === addMonths(month.month, -1));
   const [newCheckpoint, setNewCheckpoint] = useState("");
-  const low = summary.lowPoint;
-  const lowWarn = low !== null && low.balance < threshold;
-  const overdue = entries.filter((e) => isOverdue(e, today)).length;
+  const notPlanned = entries.filter((e) => e.status !== "planned").length;
+  const settingLabel = { fontSize: 12.5, color: "var(--muted)" };
+  const settingInput = { border: "1px solid var(--border)", background: "var(--panel)", width: 120, fontWeight: 600 };
 
   return (
     <div>
-      <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginBottom: 18 }}>
-        <div style={{ background: "var(--panel)", border: "1px solid var(--border)", borderRadius: 12, padding: "16px 18px", flex: "1 1 170px", minWidth: 160 }}>
-          <div style={{ fontSize: 12.5, color: "var(--muted)", marginBottom: 6 }}>Opening balance</div>
-          <MoneyCell
-            ariaLabel="Opening balance"
-            value={month.openingBalance}
-            allowNegative
-            onCommit={(v) => run(() => updateCashFlowMonth(month.id, { openingBalance: v ?? 0 }))}
-            style={{ fontSize: 19, fontWeight: 600, textAlign: "left", padding: "0 4px" }}
-          />
-          <div style={{ fontSize: 11.5, color: "var(--muted)", marginTop: 4, display: "flex", gap: 6, alignItems: "center" }}>
-            {month.openingSource === "carried" ? "Carried from last month" : "Entered by hand"}
-            {month.openingSource === "manual" && previousExists && (
-              <button
-                onClick={() => run(() => updateCashFlowMonth(month.id, { openingSource: "carried" }), "Opening now carries from last month").catch(() => {})}
-                style={{ border: "none", background: "none", color: "var(--accent)", padding: 0, fontSize: 11.5, textDecoration: "underline" }}
-              >
-                carry instead
-              </button>
-            )}
-          </div>
-        </div>
-        <StatTile
-          label={summary.closingIsActual ? "Closing balance" : "Projected month end"}
-          value={fmtCurrency(summary.closingBalance)}
-          sub={summary.closingIsActual ? "Recorded at the last checkpoint" : `Deposits ${fmtCurrency(summary.deposits)} · bills ${fmtCurrency(summary.bills)}`}
-        />
-        <StatTile
-          label="Lowest balance ahead"
-          value={low ? fmtCurrency(low.balance) : "—"}
-          sub={low ? `${weekdayDate(low.date)}${lowWarn ? ` · below ${fmtCurrency(threshold)}` : ""}` : "Every checkpoint is recorded"}
-          color={lowWarn ? "var(--attention)" : undefined}
-          title="The lowest projected balance from the next unrecorded checkpoint onward. Weekly Spend is taken at the start of each period, and a deposit with an uncertain date is assumed to arrive at the end."
-        />
-        <StatTile
-          label="Unpaid bills"
-          value={String(summary.outstandingBills.count)}
-          sub={`${fmtCurrency(summary.outstandingBills.total)}${overdue ? ` · ${overdue} overdue` : ""}`}
-          color={overdue ? "var(--attention)" : undefined}
-        />
-        <div style={{ background: "var(--panel)", border: "1px solid var(--border)", borderRadius: 12, padding: "16px 18px", flex: "0 1 150px", minWidth: 130 }}>
-          <div style={{ fontSize: 12.5, color: "var(--muted)", marginBottom: 6 }}>Daily spend rate</div>
+      <div style={{ display: "flex", gap: "8px 24px", flexWrap: "wrap", alignItems: "center", marginBottom: 14 }}>
+        <span style={{ display: "inline-flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+          <span style={settingLabel}>Opening balance</span>
+          {previous ? (
+            // The opening follows the previous month's close; it isn't typed in.
+            <>
+              <span style={{ fontFamily: "var(--mono)", fontWeight: 600, fontSize: 13.5 }}>
+                {fmtCurrency(month.openingBalance)}
+              </span>
+              {month.openingSource === "carried" ? (
+                <span style={{ fontSize: 11.5, color: "var(--muted)" }}>{longMonthLabel(previous.month)}&apos;s close</span>
+              ) : (
+                <button
+                  onClick={() => run(() => updateCashFlowMonth(month.id, { openingSource: "carried" }), `Opening now carries ${longMonthLabel(previous.month)}'s close`).catch(() => {})}
+                  style={{ border: "none", background: "none", color: "var(--accent)", padding: 0, fontSize: 11.5, textDecoration: "underline" }}
+                >
+                  use {longMonthLabel(previous.month)}&apos;s close
+                </button>
+              )}
+            </>
+          ) : (
+            <MoneyCell
+              ariaLabel="Opening balance"
+              value={month.openingBalance}
+              allowNegative
+              onCommit={(v) => run(() => updateCashFlowMonth(month.id, { openingBalance: v ?? 0 }))}
+              style={settingInput}
+            />
+          )}
+        </span>
+        <span style={{ display: "inline-flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+          <span style={settingLabel}>Daily spend rate</span>
           <MoneyCell
             ariaLabel="Daily spend rate"
             value={month.dailySpendRate}
             onCommit={(v) => run(() => updateCashFlowMonth(month.id, { dailySpendRate: v ?? 0 }))}
-            style={{ fontSize: 19, fontWeight: 600, textAlign: "left", padding: "0 4px" }}
+            style={settingInput}
           />
-          <div style={{ fontSize: 11.5, color: "var(--muted)", marginTop: 4 }}>× days = Weekly Spend</div>
-        </div>
+          <span style={{ fontSize: 11.5, color: "var(--muted)" }}>× days = Weekly Spend</span>
+        </span>
       </div>
 
       {summary.periods.map((p) => (
@@ -262,6 +258,14 @@ function StartedMonth({ appState, month, run, today, threshold }: { appState: Ap
         <SmallButton onClick={() => run(() => updateCashFlowMonth(month.id, { regenerate: true }), "Checked recurring items").catch(() => {})} title="Adds any recurring item created since this month was started; existing entries are left alone">
           Add new recurring items
         </SmallButton>
+        {notPlanned > 0 && (
+          <ConfirmButton
+            label="Set all to Planned"
+            confirmLabel={`Set ${notPlanned} entr${notPlanned === 1 ? "y" : "ies"} back to Planned`}
+            title="Puts every entry in this month back to Planned. Amounts and confirmation numbers are kept; bank-line matches are undone."
+            onConfirm={() => run(() => updateCashFlowMonth(month.id, { resetStatuses: true }), "Every entry is Planned").catch(() => {})}
+          />
+        )}
         <span style={{ display: "inline-flex", gap: 6, alignItems: "center" }}>
           <input aria-label="New checkpoint date" type="date" value={newCheckpoint} min={`${month.month}-01`} max={`${month.month}-31`} onChange={(e) => setNewCheckpoint(e.target.value)} style={{ ...inputStyle, padding: "4px 6px" }} />
           <SmallButton
@@ -315,15 +319,14 @@ function PeriodBlock({
           {p.days} day{p.days === 1 ? "" : "s"}
         </div>
       </div>
-      <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13, minWidth: 900 }}>
+      <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13, minWidth: 860 }}>
         <thead>
           <tr>
             <th style={{ ...thStyle, paddingLeft: 16 }}>Item</th>
             <th style={thStyle}>Date</th>
-            <th style={{ ...thStyle, textAlign: "right" }}>Expected</th>
-            <th style={{ ...thStyle, textAlign: "right" }}>Actual</th>
+            <th style={{ ...thStyle, textAlign: "right" }}>Credit</th>
+            <th style={{ ...thStyle, textAlign: "right" }}>Debit</th>
             <th style={thStyle}>Status</th>
-            <th style={thStyle}>Scheduled</th>
             <th style={thStyle}>Confirmation #</th>
             <th style={{ ...thStyle, textAlign: "right" }}>Balance</th>
             <th style={{ ...thStyle, width: 1 }} />
@@ -343,7 +346,7 @@ function PeriodBlock({
               />
             </td>
             <td style={tdStyle} />
-            <td colSpan={3} style={{ ...tdStyle, color: "var(--muted)", fontSize: 12 }}>
+            <td colSpan={2} style={{ ...tdStyle, color: "var(--muted)", fontSize: 12 }}>
               {p.period.spendOverride === undefined ? `${fmtCurrency(month.dailySpendRate)}/day × ${p.days}` : "Set by hand — clear it to use the daily rate"}
             </td>
             <td style={{ ...tdStyle, textAlign: "right", fontFamily: "var(--mono)" }}>{fmtCurrency(p.opening - p.spend)}</td>
@@ -370,44 +373,29 @@ function PeriodBlock({
                 style={{ ...inputStyle, padding: "3px 4px", fontSize: 12 }}
               />
             </td>
-            <td style={{ ...tdStyle, textAlign: "right", fontSize: 12, color: "var(--muted)" }}>
-              Projected
-              <div style={{ fontFamily: "var(--mono)", fontSize: 13, color: "var(--text)" }}>{fmtCurrency(p.projected)}</div>
-            </td>
-            <td style={{ ...tdStyle, width: 130 }}>
-              <MoneyCell
-                ariaLabel={`Actual balance at ${p.end}`}
-                value={p.actual}
-                allowEmpty
-                allowNegative
-                placeholder="Actual"
-                onCommit={(v) => run(() => updateCashFlowMonth(month.id, { periods: [{ id: p.period.id, actualBalance: v }] }), v === null ? "Checkpoint cleared" : "Checkpoint recorded")}
-                style={{ border: "1px solid var(--border)", background: "var(--panel)", fontWeight: 600 }}
-              />
-            </td>
-            <td colSpan={3} style={{ ...tdStyle, fontSize: 12 }}>
-              {p.variance !== undefined ? (
-                <span>
-                  <span style={{ fontFamily: "var(--mono)", fontWeight: 600, color: p.variance < 0 ? "var(--attention)" : "var(--positive)" }}>
-                    {p.variance >= 0 ? "+" : ""}
-                    {fmtCurrency(p.variance)}
-                  </span>{" "}
-                  vs projected · spent about <span style={{ fontFamily: "var(--mono)" }}>{fmtCurrency(p.impliedSpend)}</span>
-                  {p.impliedDailySpend !== undefined && <span style={{ color: "var(--muted)" }}> ({fmtCurrency(p.impliedDailySpend)}/day)</span>}
-                </span>
-              ) : suggestion ? (
-                <span>
-                  Bank lines put it at <span style={{ fontFamily: "var(--mono)", fontWeight: 600 }}>{fmtCurrency(suggestion.balance)}</span>{" "}
-                  <SmallButton
-                    title={`${fmtCurrency(suggestion.basedOn.balance)} on ${shortDate(suggestion.basedOn.date)} plus ${suggestion.lines} imported line${suggestion.lines === 1 ? "" : "s"} — check it against your banking app`}
-                    onClick={() => run(() => updateCashFlowMonth(month.id, { periods: [{ id: p.period.id, actualBalance: suggestion.balance }] }), "Checkpoint recorded").catch(() => {})}
-                  >
-                    Use it
-                  </SmallButton>
-                </span>
-              ) : (
-                <span style={{ color: "var(--muted)" }}>Enter the real balance on {shortDate(p.end)}</span>
-              )}
+            <td colSpan={4} style={{ ...tdStyle, fontSize: 12 }}>
+              <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+                <MoneyCell
+                  ariaLabel={`Actual balance at ${p.end}`}
+                  value={p.actual}
+                  allowEmpty
+                  allowNegative
+                  placeholder="Actual"
+                  onCommit={(v) => run(() => updateCashFlowMonth(month.id, { periods: [{ id: p.period.id, actualBalance: v }] }), v === null ? "Checkpoint cleared" : "Checkpoint recorded")}
+                  style={{ border: "1px solid var(--border)", background: "var(--panel)", fontWeight: 600, width: 130 }}
+                />
+                {p.actual === undefined && suggestion && (
+                  <span>
+                    Bank lines put it at <span style={{ fontFamily: "var(--mono)", fontWeight: 600 }}>{fmtCurrency(suggestion.balance)}</span>{" "}
+                    <SmallButton
+                      title={`${fmtCurrency(suggestion.basedOn.balance)} on ${shortDate(suggestion.basedOn.date)} plus ${suggestion.lines} imported line${suggestion.lines === 1 ? "" : "s"} — check it against your banking app`}
+                      onClick={() => run(() => updateCashFlowMonth(month.id, { periods: [{ id: p.period.id, actualBalance: suggestion.balance }] }), "Checkpoint recorded").catch(() => {})}
+                    >
+                      Use it
+                    </SmallButton>
+                  </span>
+                )}
+              </div>
             </td>
             <td style={{ ...tdStyle, textAlign: "right", fontFamily: "var(--mono)", fontWeight: 600 }}>{fmtCurrency(p.actual ?? p.projected)}</td>
             <td style={{ ...tdStyle, whiteSpace: "nowrap" }}>
@@ -441,7 +429,6 @@ function EntryRowView({ row, run, today }: { row: EntryRow; run: Run; today: str
       <td style={{ ...tdStyle, paddingLeft: 10, minWidth: 210 }}>
         <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
           <TextCell ariaLabel={`Name of ${e.name}`} value={e.name} onCommit={(v) => (v ? update({ name: v }) : Promise.resolve())} style={{ fontWeight: muted ? 400 : 600, minWidth: 120 }} />
-          {e.settlement && e.settlement !== "manual" && <Tag title={SETTLEMENT_LABELS[e.settlement]}>{e.settlement === "auto" ? "AD" : "X"}</Tag>}
           {!e.itemId && <Tag title="Not from a recurring item">one-off</Tag>}
         </div>
       </td>
@@ -463,17 +450,18 @@ function EntryRowView({ row, run, today }: { row: EntryRow; run: Run; today: str
           </div>
         )}
       </td>
-      <td style={{ ...tdStyle, width: 120 }}>
-        <MoneyCell
-          ariaLabel={`Expected amount of ${e.name}`}
-          value={e.expectedAmount}
-          onCommit={(v) => update({ expectedAmount: v ?? 0 })}
-          style={{ color: e.kind === "deposit" ? "var(--positive)" : "var(--text)" }}
-        />
-      </td>
-      <td style={{ ...tdStyle, width: 120 }}>
-        <MoneyCell ariaLabel={`Actual amount of ${e.name}`} value={e.actualAmount} allowEmpty placeholder="—" onCommit={(v) => update({ actualAmount: v })} />
-      </td>
+      {/* As in the spreadsheet: CREDIT is money out, DEBIT is money in. */}
+      {e.kind === "bill" ? (
+        <>
+          <AmountCell entry={e} update={update} />
+          <td style={tdStyle} />
+        </>
+      ) : (
+        <>
+          <td style={tdStyle} />
+          <AmountCell entry={e} update={update} />
+        </>
+      )}
       <td style={tdStyle}>
         <select
           aria-label={`Status of ${e.name}`}
@@ -489,36 +477,41 @@ function EntryRowView({ row, run, today }: { row: EntryRow; run: Run; today: str
           ))}
         </select>
       </td>
-      <td style={tdStyle}>
-        <input
-          type="date"
-          aria-label={`Scheduled date of ${e.name}`}
-          value={e.scheduledDate ?? ""}
-          onChange={(ev) => {
-            const v = ev.target.value;
-            if (v === "") update({ scheduledDate: null }).catch(() => {});
-            else if (isValidIsoDate(v)) update({ scheduledDate: v, ...(e.status === "planned" ? { status: "scheduled" as const } : {}) }).catch(() => {});
-          }}
-          style={{ ...inputStyle, padding: "3px 4px", fontSize: 12 }}
-        />
-      </td>
       <td style={{ ...tdStyle, width: 140 }}>
         <TextCell
           ariaLabel={`Confirmation number of ${e.name}`}
           value={e.confirmationCode}
           placeholder={e.kind === "bill" && (e.settlement ?? "manual") === "manual" ? "—" : ""}
-          onCommit={(v) => update({ confirmationCode: v, ...(v && e.status === "planned" ? { status: "scheduled" as const } : {}) })}
-          style={{ fontFamily: "var(--mono)", fontSize: 12 }}
+          onCommit={(v) => update({ confirmationCode: v })}
+          // A drawn box (the inline-editable class hides borders until hover)
+          // so the empty field is visible.
+          style={{ fontFamily: "var(--mono)", fontSize: 12, background: "var(--panel)", boxShadow: "inset 0 0 0 1px var(--border)" }}
         />
       </td>
       <td style={{ ...tdStyle, textAlign: "right", fontFamily: "var(--mono)", color: row.balanceAfter < 0 ? "var(--attention)" : "var(--text)" }}>
         {fmtCurrency(row.balanceAfter)}
-        <div style={{ fontSize: 10.5, color: e.kind === "deposit" ? "var(--positive)" : "var(--muted)" }}>{row.counted ? signedAmount(row.amount, e.kind) : "not counted"}</div>
+        {!row.counted && <div style={{ fontSize: 10.5, color: "var(--muted)" }}>not counted</div>}
       </td>
       <td style={{ ...tdStyle, whiteSpace: "nowrap" }}>
         <ConfirmButton label="×" confirmLabel="Delete" title={`Delete ${e.name}`} onConfirm={() => run(() => deleteCashFlowEntry(e.id), `Deleted ${e.name}`).catch(() => {})} />
       </td>
     </tr>
+  );
+}
+
+// The CREDIT or DEBIT cell: one amount, the projection until you type or
+// paste the real figure over it. Saving it makes that the entry's only
+// amount, so a stale actual (e.g. from a bank match) can't shadow it.
+function AmountCell({ entry: e, update }: { entry: CashFlowEntry; update: (patch: Parameters<typeof updateCashFlowEntry>[1]) => Promise<void> }) {
+  return (
+    <td style={{ ...tdStyle, width: 120 }}>
+      <MoneyCell
+        ariaLabel={`Amount of ${e.name}`}
+        value={entryAmount(e)}
+        onCommit={(v) => update({ expectedAmount: v ?? 0, actualAmount: null })}
+        style={{ color: e.kind === "deposit" ? "var(--positive)" : "var(--text)" }}
+      />
+    </td>
   );
 }
 
@@ -545,16 +538,16 @@ function AddEntryRow({ month, defaultDate, run, onDone }: { month: CashFlowMonth
       <td style={tdStyle}>
         <input aria-label="New item date" type="date" value={date} onChange={(e) => setDate(e.target.value)} style={{ ...inputStyle, padding: "3px 4px", fontSize: 12 }} />
       </td>
-      <td style={tdStyle}>
-        <input aria-label="New item amount" value={amount} onChange={(e) => setAmount(e.target.value)} placeholder="0.00" inputMode="decimal" style={{ ...inputStyle, width: 100, fontFamily: "var(--mono)", textAlign: "right" }} />
+      <td colSpan={2} style={tdStyle}>
+        <span style={{ display: "inline-flex", gap: 6 }}>
+          <select aria-label="New item kind" value={kind} onChange={(e) => setKind(e.target.value as CashFlowEntry["kind"])} style={{ ...inputStyle, padding: "4px" }}>
+            <option value="bill">Credit (out)</option>
+            <option value="deposit">Debit (in)</option>
+          </select>
+          <input aria-label="New item amount" value={amount} onChange={(e) => setAmount(e.target.value)} placeholder="0.00" inputMode="decimal" style={{ ...inputStyle, width: 100, fontFamily: "var(--mono)", textAlign: "right" }} />
+        </span>
       </td>
-      <td style={tdStyle}>
-        <select aria-label="New item kind" value={kind} onChange={(e) => setKind(e.target.value as CashFlowEntry["kind"])} style={{ ...inputStyle, padding: "4px" }}>
-          <option value="bill">Bill</option>
-          <option value="deposit">Deposit</option>
-        </select>
-      </td>
-      <td colSpan={5} style={tdStyle}>
+      <td colSpan={4} style={tdStyle}>
         <span style={{ display: "inline-flex", gap: 6 }}>
           <SmallButton tone="accent" onClick={add} disabled={!valid}>
             Add

@@ -328,7 +328,11 @@ export function parseBudgetSheet(sheetName: string, rows: SheetCell[][], today: 
 
     const past = date <= today;
     let status: EntryStatus;
-    if (amount === 0) {
+    if (month >= monthKeyOf(today)) {
+      // The current month (and any later one) starts all Planned; its
+      // statuses are set by hand as things happen, not read off the sheet.
+      status = "planned";
+    } else if (amount === 0) {
       const cancelled = /cancel|not using/i.test(note);
       status = past || settlement === "external" || cancelled ? "skipped" : "planned";
     } else if (past) {
@@ -538,7 +542,9 @@ export function seedItems(months: ParsedMonth[], holidays: ReadonlySet<string>):
       // own schedule, so its day is an estimate.
       dateUncertain: kind === "deposit" && settlement === "external",
       ...(owner ? { owner } : {}),
-      active: inNewest.length > 0 && !inNewest.every((e) => e.status === "skipped" && /cancel|not using/i.test(e.notes ?? "")),
+      // Read off the amount and note, not the status: the current month's
+      // rows are all Planned.
+      active: inNewest.length > 0 && !inNewest.every((e) => e.amount === 0 && /cancel|not using/i.test(e.notes ?? "")),
       monthsSeen,
     });
   }

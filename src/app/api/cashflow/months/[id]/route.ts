@@ -5,7 +5,7 @@ import { MAX_NAME_LENGTH, readJsonObject } from "@/lib/request";
 import { readIsoDate, readMoney } from "@/lib/cashflowRequest";
 import { generateMonthEntries } from "@/lib/cashflow";
 import { addMonths, monthKeyOf } from "@/lib/dates";
-import { detachEntries, refreshOpeningOf, refreshOpeningsFrom } from "@/lib/cashflowState";
+import { detachEntries, refreshOpeningOf, refreshOpeningsFrom, resetMonthStatuses } from "@/lib/cashflowState";
 import type { CashFlowPeriod } from "@/lib/types";
 
 const MAX_PERIODS = 10;
@@ -123,9 +123,11 @@ export async function PATCH(request: Request, ctx: RouteContext<"/api/cashflow/m
       generated = created.length;
     }
 
+    const reset = body.resetStatuses === true ? resetMonthStatuses(state, month) : 0;
+
     if (body.openingSource === "carried") refreshOpeningOf(state, month);
     refreshOpeningsFrom(state, month);
-    return { month, generated };
+    return { month, generated, reset };
   });
 
   if ("error" in result) {

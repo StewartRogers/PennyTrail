@@ -63,6 +63,28 @@ export function unlinkEntry(state: AppState, txn: BankTransaction): void {
   }
 }
 
+// Puts every entry in a month back to Planned. A posted entry keeps its
+// place (its posted date becomes its planned date, so it stays in this
+// month and period) and its amount, and loses any bank-line match, since
+// a planned entry isn't settled by anything. Returns how many changed.
+export function resetMonthStatuses(state: AppState, month: CashFlowMonth): number {
+  let changed = 0;
+  for (const entry of state.cashFlowEntries) {
+    if (entry.monthId !== month.id || entry.status === "planned") continue;
+    if (entry.postedDate) {
+      entry.postingDate = entry.postedDate;
+      delete entry.postedDate;
+    }
+    if (entry.bankTransactionId) {
+      detachEntries(state, new Set([entry.id]));
+      delete entry.bankTransactionId;
+    }
+    entry.status = "planned";
+    changed++;
+  }
+  return changed;
+}
+
 // Removing bank lines must not leave entries pointing at lines that are
 // gone. The entries keep their posted status — the payment still happened —
 // and only lose the link.

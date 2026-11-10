@@ -114,6 +114,23 @@ describe("PATCH /api/cashflow/months/[id]", () => {
     expect((await patchMonth(oct.month.id, { removePeriodId: p3.id })).status).toBe(400);
   });
 
+  it("sets every entry back to Planned with resetStatuses, keeping amounts and places", async () => {
+    const account = await accountWithRent();
+    const { body: oct } = await startMonth({ accountId: account.id, month: "2026-10", openingBalance: 10000 });
+    const [first, second] = oct.entries;
+    await patchEntry(first.id, { status: "posted", postedDate: "2026-10-02", actualAmount: 1490, confirmationCode: "123" });
+    await patchEntry(second.id, { status: "skipped" });
+    const { status, body } = await patchMonth(oct.month.id, { resetStatuses: true });
+    expect(status).toBe(200);
+    expect(body.reset).toBe(2);
+    const entries = (await readStore()).cashFlowEntries;
+    const a = entries.find((e) => e.id === first.id)!;
+    expect(a).toMatchObject({ status: "planned", postingDate: "2026-10-02", actualAmount: 1490, confirmationCode: "123", monthId: oct.month.id });
+    expect(a.postedDate).toBeUndefined();
+    expect(entries.find((e) => e.id === second.id)!.status).toBe("planned");
+    expect((await patchMonth(oct.month.id, { resetStatuses: true })).body.reset).toBe(0);
+  });
+
   it("adds a newly created item's entries with regenerate, without duplicating", async () => {
     const account = await accountWithRent();
     const { body: oct } = await startMonth({ accountId: account.id, month: "2026-10", openingBalance: 1 });

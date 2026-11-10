@@ -217,16 +217,6 @@ export function TextCell({
   );
 }
 
-export function StatTile({ label, value, sub, color, title }: { label: string; value: ReactNode; sub?: ReactNode; color?: string; title?: string }) {
-  return (
-    <div title={title} style={{ background: "var(--panel)", border: "1px solid var(--border)", borderRadius: 12, padding: "16px 18px", flex: "1 1 170px", minWidth: 160 }}>
-      <div style={{ fontSize: 12.5, color: "var(--muted)", marginBottom: 6 }}>{label}</div>
-      <div style={{ fontFamily: "var(--mono)", fontSize: 21, fontWeight: 600, color: color ?? "var(--text)" }}>{value}</div>
-      {sub && <div style={{ fontSize: 11.5, color: "var(--muted)", marginTop: 4 }}>{sub}</div>}
-    </div>
-  );
-}
-
 export function Tag({ children, color = "var(--muted)", title }: { children: ReactNode; color?: string; title?: string }) {
   return (
     <span title={title} style={{ border: `1px solid ${color}`, color, fontSize: 10.5, fontWeight: 600, borderRadius: 10, padding: "0 6px", whiteSpace: "nowrap" }}>

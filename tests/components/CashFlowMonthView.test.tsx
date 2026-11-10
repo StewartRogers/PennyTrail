@@ -3,12 +3,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { CashFlowMonthView } from "@/components/cashflow/CashFlowMonthView";
 import { ToastProvider } from "@/components/ToastContext";
-import { startCashFlowMonth, updateCashFlowEntry, updateCashFlowMonth } from "@/lib/api";
+import { addCashFlowEntry, startCashFlowMonth, updateCashFlowEntry, updateCashFlowMonth } from "@/lib/api";
 import type { AppState, BankAccount, CashFlowEntry, CashFlowMonth } from "@/lib/types";
 import { makeAppState } from "../helpers/fixtures";
 
 vi.mock("@/lib/api", () => ({
-  addCashFlowEntry: vi.fn(),
+  addCashFlowEntry: vi.fn().mockResolvedValue({}),
   deleteCashFlowEntry: vi.fn(),
   deleteCashFlowMonth: vi.fn(),
   startCashFlowMonth: vi.fn().mockResolvedValue({}),
@@ -76,25 +76,86 @@ describe("CashFlowMonthView", () => {
     expect(screen.getAllByText("END OF WEEK")).toHaveLength(2);
     expect(screen.getByText("END OF MONTH")).toBeInTheDocument();
     // P1: 10,000 − 100 − 1,500 + 3,000.50 − 222.47 = 11,178.03 projected; actual 11,150.01.
-    expect(screen.getByText("$11,178.03", { selector: "div" })).toBeInTheDocument();
-    expect(screen.getByText("-$28.02")).toBeInTheDocument();
+    // The checkpoint shows the recorded balance only — no projected or variance line.
+    expect((screen.getByLabelText("Actual balance at 2026-10-02") as HTMLInputElement).value).toBe("11150.01");
+    expect(screen.queryByText(/Projected/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/vs projected/)).not.toBeInTheDocument();
   });
 
-  it("shows the month's totals: projected end, lowest point ahead, and unpaid bills", () => {
+  it("keeps the table to item, date, credit, debit, status, confirmation, and balance", () => {
     const { month, entries } = october();
     renderView(makeAppState({ bankAccounts: [account], cashFlowMonths: [month], cashFlowEntries: entries }));
-    // P2 from 11,150.01: −350 −28.92 −754.30 = 10,016.79; P3: −1,100 = 8,916.79, then
-    // Hydro −188.77 on Fri Oct 23 = 8,728.02 — the low point, and the month end.
-    expect(screen.getByText("Projected month end").parentElement).toHaveTextContent("$8,728.02");
-    expect(screen.getByText("Lowest balance ahead").parentElement).toHaveTextContent("$8,728.02Fri, Oct 23");
-    expect(screen.getByText("Unpaid bills").parentElement).toHaveTextContent("2");
-    expect(screen.getByText("Unpaid bills").parentElement).toHaveTextContent("$943.07");
+    const headers = within(screen.getAllByRole("table")[0])
+      .getAllByRole("columnheader")
+      .map((h) => h.textContent);
+    expect(headers).toEqual(["Item", "Date", "Credit", "Debit", "Status", "Confirmation #", "Balance", ""]);
   });
 
-  it("warns when the low point is below the account's threshold", () => {
+  it("puts bills under CREDIT and deposits under DEBIT, as the spreadsheet does", () => {
     const { month, entries } = october();
-    renderView(makeAppState({ bankAccounts: [{ ...account, lowBalanceThreshold: 9000 }], cashFlowMonths: [month], cashFlowEntries: entries }));
-    expect(screen.getByText("Lowest balance ahead").parentElement).toHaveTextContent("below $9,000.00");
+    renderView(makeAppState({ bankAccounts: [account], cashFlowMonths: [month], cashFlowEntries: entries }));
+    const cellIndex = (label: string) => {
+      const cell = screen.getByLabelText(label).closest("td")!;
+      return Array.from(cell.parentElement!.children).indexOf(cell);
+    };
+    expect(cellIndex("Amount of Hydro")).toBe(2);
+    expect(cellIndex("Weekly Spend for the period ending 2026-10-02")).toBe(2);
+    expect(cellIndex("Amount of SR pay")).toBe(3);
+  });
+
+  it("shows one amount per entry, the actual once there is one", () => {
+    const { month, entries } = october();
+    renderView(makeAppState({ bankAccounts: [account], cashFlowMonths: [month], cashFlowEntries: entries }));
+    expect((screen.getByLabelText("Amount of Hydro") as HTMLInputElement).value).toBe("188.77");
+    expect((screen.getByLabelText("Amount of CIBC") as HTMLInputElement).value).toBe("222.47");
+    expect(screen.queryByLabelText(/Projected amount/)).not.toBeInTheDocument();
+  });
+
+  it("saves a pasted amount as the entry's amount", async () => {
+    const { month, entries } = october();
+    renderView(makeAppState({ bankAccounts: [account], cashFlowMonths: [month], cashFlowEntries: entries }));
+    const cibc = screen.getByLabelText("Amount of CIBC");
+    fireEvent.change(cibc, { target: { value: "$201.10" } });
+    fireEvent.blur(cibc);
+    await waitFor(() => expect(updateCashFlowEntry).toHaveBeenCalledWith("CIBC", { expectedAmount: 201.1, actualAmount: null }));
+  });
+
+  it("has no summary tiles above the periods", () => {
+    const { month, entries } = october();
+    renderView(makeAppState({ bankAccounts: [account], cashFlowMonths: [month], cashFlowEntries: entries }));
+    for (const label of ["Projected month end", "Closing balance", "Lowest balance ahead", "Unpaid bills"]) {
+      expect(screen.queryByText(label)).not.toBeInTheDocument();
+    }
+  });
+
+  it("edits the first month's opening balance and the daily spend rate", async () => {
+    const { month, entries } = october();
+    renderView(makeAppState({ bankAccounts: [account], cashFlowMonths: [month], cashFlowEntries: entries }));
+    const opening = screen.getByLabelText("Opening balance");
+    fireEvent.change(opening, { target: { value: "10,250" } });
+    fireEvent.blur(opening);
+    await waitFor(() => expect(updateCashFlowMonth).toHaveBeenCalledWith("m_oct", { openingBalance: 10250 }));
+    const rate = screen.getByLabelText("Daily spend rate");
+    fireEvent.change(rate, { target: { value: "60" } });
+    fireEvent.blur(rate);
+    await waitFor(() => expect(updateCashFlowMonth).toHaveBeenCalledWith("m_oct", { dailySpendRate: 60 }));
+  });
+
+  it("shows a carried opening as last month's close, not as a field", () => {
+    const { month, entries } = october();
+    const september: CashFlowMonth = { ...month, id: "m_sep", month: "2026-09", periods: [{ id: "s1", endDate: "2026-09-30", label: "End of month" }] };
+    renderView(makeAppState({ bankAccounts: [account], cashFlowMonths: [september, { ...month, openingSource: "carried" }], cashFlowEntries: entries }));
+    expect(screen.queryByLabelText("Opening balance")).not.toBeInTheDocument();
+    expect(screen.getByText("September 2026's close")).toBeInTheDocument();
+  });
+
+  it("switches a hand-entered opening to last month's close", async () => {
+    const { month, entries } = october();
+    const september: CashFlowMonth = { ...month, id: "m_sep", month: "2026-09", periods: [{ id: "s1", endDate: "2026-09-30", label: "End of month" }] };
+    renderView(makeAppState({ bankAccounts: [account], cashFlowMonths: [september, month], cashFlowEntries: entries }));
+    expect(screen.queryByLabelText("Opening balance")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "use September 2026's close" }));
+    await waitFor(() => expect(updateCashFlowMonth).toHaveBeenCalledWith("m_oct", { openingSource: "carried" }));
   });
 
   it("shows the nominal due date when a payment rolled", () => {
@@ -140,13 +201,60 @@ describe("CashFlowMonthView", () => {
     await waitFor(() => expect(updateCashFlowEntry).toHaveBeenCalledWith("Hydro", { status: "posted" }));
   });
 
-  it("entering a confirmation number on a planned bill schedules it", async () => {
+  it("sets every entry back to Planned after a second click", async () => {
+    const { month, entries } = october();
+    renderView(makeAppState({ bankAccounts: [account], cashFlowMonths: [month], cashFlowEntries: entries }));
+    fireEvent.click(screen.getByRole("button", { name: "Set all to Planned" }));
+    expect(updateCashFlowMonth).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "Set 5 entries back to Planned" }));
+    await waitFor(() => expect(updateCashFlowMonth).toHaveBeenCalledWith("m_oct", { resetStatuses: true }));
+  });
+
+  it("hides Set all to Planned when everything already is, and shows no AD/X tags", () => {
+    const { month, entries } = october();
+    renderView(makeAppState({ bankAccounts: [account], cashFlowMonths: [month], cashFlowEntries: entries.map((e) => ({ ...e, status: "planned" as const })) }));
+    expect(screen.queryByRole("button", { name: "Set all to Planned" })).not.toBeInTheDocument();
+    expect(screen.queryByText("AD")).not.toBeInTheDocument();
+  });
+
+  it("adds an item as Credit (money out) or Debit (money in)", async () => {
+    const { month, entries } = october();
+    renderView(makeAppState({ bankAccounts: [account], cashFlowMonths: [month], cashFlowEntries: entries }));
+    fireEvent.click(screen.getAllByRole("button", { name: "+ Add an item to this period" })[2]);
+    expect((screen.getByLabelText("New item kind") as HTMLSelectElement).value).toBe("bill");
+    expect(within(screen.getByLabelText("New item kind")).getByText("Credit (out)")).toHaveValue("bill");
+    fireEvent.change(screen.getByLabelText("New item name"), { target: { value: "Refund" } });
+    fireEvent.change(screen.getByLabelText("New item kind"), { target: { value: "deposit" } });
+    fireEvent.change(screen.getByLabelText("New item amount"), { target: { value: "40" } });
+    fireEvent.click(screen.getByRole("button", { name: "Add" }));
+    await waitFor(() => expect(addCashFlowEntry).toHaveBeenCalledWith({ monthId: "m_oct", name: "Refund", kind: "deposit", postingDate: "2026-10-31", expectedAmount: 40 }));
+  });
+
+  it("draws the empty Confirmation # field so it can be seen", () => {
+    const { month, entries } = october();
+    renderView(makeAppState({ bankAccounts: [account], cashFlowMonths: [month], cashFlowEntries: entries }));
+    const field = screen.getByLabelText("Confirmation number of Hydro") as HTMLInputElement;
+    expect(field.value).toBe("");
+    expect(field.style.boxShadow).toContain("var(--border)");
+  });
+
+  it("doesn't save an unchanged amount", async () => {
+    const { month, entries } = october();
+    renderView(makeAppState({ bankAccounts: [account], cashFlowMonths: [month], cashFlowEntries: entries }));
+    const hydro = screen.getByLabelText("Amount of Hydro");
+    fireEvent.change(hydro, { target: { value: "188.77" } });
+    fireEvent.blur(hydro);
+    await Promise.resolve();
+    expect(updateCashFlowEntry).not.toHaveBeenCalled();
+  });
+
+  it("entering a confirmation number leaves the status alone", async () => {
     const { month, entries } = october();
     renderView(makeAppState({ bankAccounts: [account], cashFlowMonths: [month], cashFlowEntries: entries }));
     const input = screen.getByLabelText("Confirmation number of Hydro");
     fireEvent.change(input, { target: { value: "136266" } });
     fireEvent.blur(input);
-    await waitFor(() => expect(updateCashFlowEntry).toHaveBeenCalledWith("Hydro", { confirmationCode: "136266", status: "scheduled" }));
+    await waitFor(() => expect(updateCashFlowEntry).toHaveBeenCalledWith("Hydro", { confirmationCode: "136266" }));
   });
 
   it("marks an overdue entry", () => {
@@ -155,15 +263,14 @@ describe("CashFlowMonthView", () => {
     renderView(makeAppState({ bankAccounts: [account], cashFlowMonths: [month], cashFlowEntries: entries }));
     const status = screen.getByLabelText("Status of Late bill") as HTMLSelectElement;
     expect(within(status).getByText("Planned — overdue")).toBeInTheDocument();
-    // Simplii, scheduled for Oct 9 but not posted, is overdue too: done means posted.
-    expect(screen.getByText("Unpaid bills").parentElement).toHaveTextContent("2 overdue");
   });
 
   it("offers to start a month that doesn't exist, carrying the previous close", async () => {
     const { month, entries } = october();
     renderView(makeAppState({ bankAccounts: [account], cashFlowMonths: [month], cashFlowEntries: entries }), "2026-11");
     expect(screen.getByText(/November 2026 hasn.t been started/)).toBeInTheDocument();
-    expect(screen.getByText(/Leave blank to carry \$8,728\.02/)).toBeInTheDocument();
+    expect(screen.getByText("$8,728.02")).toBeInTheDocument();
+    expect(screen.queryByLabelText("Opening balance")).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Start November 2026" }));
     await waitFor(() => expect(startCashFlowMonth).toHaveBeenCalledWith({ accountId: "acct", month: "2026-11" }));
   });
