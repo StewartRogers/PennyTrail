@@ -3,7 +3,7 @@
 import { useState } from "react";
 import type { AppState, CashFlowEntry } from "@/lib/types";
 import { updateCashFlowEntry } from "@/lib/api";
-import { entryAmount, entryDate, isOutstanding, isOverdue, needsScheduling } from "@/lib/cashflow";
+import { entryAmount, entryDate, isOutstanding, isOverdue, isPaymentSetUp, needsScheduling } from "@/lib/cashflow";
 import { addDays } from "@/lib/dates";
 import { isValidIsoDate } from "@/lib/request";
 import { fmtCurrency } from "@/lib/format";
@@ -30,8 +30,8 @@ export function CashFlowUpcoming({ appState, onReload, accountId, onOpenMonth }:
   const groups: { title: string; hint: string; entries: CashFlowEntry[] }[] = [
     { title: "Overdue", hint: "Past their date and not posted yet", entries: overdue },
     { title: "Needs scheduling", hint: "Bills you pay yourself that don't have a payment set up", entries: soon.filter(needsScheduling) },
-    { title: "Scheduled, waiting to post", hint: "Payment set up; done once the bank posts it", entries: soon.filter((e) => e.status === "scheduled") },
-    { title: "Expected", hint: "Automatic payments, deposits, and items someone else handles", entries: soon.filter((e) => e.status === "planned" && !needsScheduling(e)) },
+    { title: "Scheduled, waiting to post", hint: "Payment set up; done once the bank posts it", entries: soon.filter(isPaymentSetUp) },
+    { title: "Expected", hint: "Automatic payments, deposits, and items someone else handles", entries: soon.filter((e) => e.status === "planned" && !needsScheduling(e) && !isPaymentSetUp(e)) },
   ];
 
   return (

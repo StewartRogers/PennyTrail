@@ -114,7 +114,7 @@ describe("PATCH /api/cashflow/months/[id]", () => {
     expect((await patchMonth(oct.month.id, { removePeriodId: p3.id })).status).toBe(400);
   });
 
-  it("sets every entry back to Planned with resetStatuses, keeping amounts and places", async () => {
+  it("sets every entry back to Planned with resetStatuses, as setting each by hand would", async () => {
     const account = await accountWithRent();
     const { body: oct } = await startMonth({ accountId: account.id, month: "2026-10", openingBalance: 10000 });
     const [first, second] = oct.entries;
@@ -125,7 +125,7 @@ describe("PATCH /api/cashflow/months/[id]", () => {
     expect(body.reset).toBe(2);
     const entries = (await readStore()).cashFlowEntries;
     const a = entries.find((e) => e.id === first.id)!;
-    expect(a).toMatchObject({ status: "planned", postingDate: "2026-10-02", actualAmount: 1490, confirmationCode: "123", monthId: oct.month.id });
+    expect(a).toMatchObject({ status: "planned", postingDate: first.postingDate, actualAmount: 1490, confirmationCode: "123", monthId: oct.month.id });
     expect(a.postedDate).toBeUndefined();
     expect(entries.find((e) => e.id === second.id)!.status).toBe("planned");
     expect((await patchMonth(oct.month.id, { resetStatuses: true })).body.reset).toBe(0);

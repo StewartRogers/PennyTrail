@@ -20,8 +20,8 @@ describe("resetMonthStatuses", () => {
     expect(resetMonthStatuses(state, month)).toBe(3);
     expect(state.cashFlowEntries.every((e) => e.status === "planned")).toBe(true);
     const posted = state.cashFlowEntries.find((e) => e.name === "Posted")!;
-    // Stays where it posted, with the amount it posted for.
-    expect(posted).toMatchObject({ postingDate: "2026-11-04", actualAmount: 98.5 });
+    // As setting it to Planned by hand does: back on its planned date, amount kept.
+    expect(posted).toMatchObject({ postingDate: "2026-11-02", actualAmount: 98.5 });
     expect(posted.postedDate).toBeUndefined();
     expect(state.cashFlowEntries.find((e) => e.name === "Scheduled")!.confirmationCode).toBe("123");
   });
@@ -34,8 +34,26 @@ describe("resetMonthStatuses", () => {
       bankTransactions: [txn],
     });
     resetMonthStatuses(state, month);
-    expect(state.cashFlowEntries[0].bankTransactionId).toBeUndefined();
+    const hydro = state.cashFlowEntries[0];
+    expect(hydro.bankTransactionId).toBeUndefined();
     expect(state.bankTransactions[0].entryId).toBeUndefined();
+    // Unmatched as unlinkEntry does: the bank's amount and date go, the projection stays.
+    expect(hydro).toMatchObject({ status: "planned", postingDate: "2026-11-02", expectedAmount: 100 });
+    expect(hydro.actualAmount).toBeUndefined();
+    expect(hydro.postedDate).toBeUndefined();
+  });
+
+  it("moves a posted entry back to the month of its planned date when that month exists", () => {
+    const december: CashFlowMonth = { ...month, id: "m_dec", month: "2026-12", openingSource: "carried", periods: [{ id: "pd", endDate: "2026-12-31", label: "End of month" }] };
+    const state = makeAppState({
+      cashFlowMonths: [month, december],
+      cashFlowEntries: [entry({ name: "Early", postingDate: "2026-12-01", dueDate: "2026-12-01", status: "posted", postedDate: "2026-11-30" })],
+    });
+    resetMonthStatuses(state, month);
+    expect(state.cashFlowEntries[0].monthId).toBe("m_dec");
+    // November's close no longer includes it (1,000 − 30 days × $50 Weekly
+    // Spend = −500, not −600), and December's carried opening follows.
+    expect(state.cashFlowMonths.find((m) => m.id === "m_dec")!.openingBalance).toBe(-500);
   });
 
   it("leaves other months alone", () => {

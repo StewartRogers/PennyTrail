@@ -83,10 +83,22 @@ describe("Workbook file picker on History", () => {
     renderHistory();
     const input = pick("Workbook file", new File(["x"], "budget.xlsx"));
     expect(await screen.findByText("Reading budget.xlsx…")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Choose a different file" })).toBeDisabled();
+    // Nothing is loaded until the read finishes.
+    expect(screen.getByRole("button", { name: "Choose .xlsx file" })).toBeDisabled();
     finish([]);
     await waitFor(() => expect(screen.getByText("budget.xlsx", { selector: "span" })).toBeInTheDocument());
     expect(screen.getByRole("button", { name: "Choose a different file" })).toBeEnabled();
     expect(input.value).toBe("");
+  });
+
+  it("keeps naming the loaded workbook when the next one fails to read", async () => {
+    renderHistory();
+    pick("Workbook file", new File(["x"], "good.xlsx"));
+    expect(await screen.findByText("good.xlsx", { selector: "span" })).toBeInTheDocument();
+    vi.mocked(readXlsx).mockRejectedValueOnce(new Error("Not a workbook"));
+    pick("Workbook file", new File(["x"], "broken.xlsx"));
+    await waitFor(() => expect(screen.queryByText(/Reading/)).not.toBeInTheDocument());
+    expect(screen.getByText("good.xlsx", { selector: "span" })).toBeInTheDocument();
+    expect(screen.queryByText("broken.xlsx", { selector: "span" })).not.toBeInTheDocument();
   });
 });

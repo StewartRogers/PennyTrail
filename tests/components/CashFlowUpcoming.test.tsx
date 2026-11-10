@@ -50,6 +50,22 @@ describe("CashFlowUpcoming", () => {
     expect(screen.queryByText("Other account")).not.toBeInTheDocument();
   });
 
+  it("files a planned bill with a confirmation number under Scheduled, not Needs scheduling", () => {
+    render(
+      <ToastProvider>
+        <CashFlowUpcoming
+          appState={makeAppState({ cashFlowMonths: [month], cashFlowEntries: [e({ name: "Paid", postingDate: "2026-10-22", confirmationCode: "555" })] })}
+          onReload={vi.fn().mockResolvedValue(undefined)}
+          accountId="acct"
+          onOpenMonth={vi.fn()}
+        />
+      </ToastProvider>
+    );
+    expect(screen.getByText("Scheduled, waiting to post · 1")).toBeInTheDocument();
+    expect(screen.queryByText(/Needs scheduling · /)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Expected · /)).not.toBeInTheDocument();
+  });
+
   it("widens the horizon", () => {
     renderUpcoming();
     fireEvent.click(screen.getByRole("button", { name: "31 days" }));

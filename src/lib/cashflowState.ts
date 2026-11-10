@@ -63,25 +63,33 @@ export function unlinkEntry(state: AppState, txn: BankTransaction): void {
   }
 }
 
-// Puts every entry in a month back to Planned. A posted entry keeps its
-// place (its posted date becomes its planned date, so it stays in this
-// month and period) and its amount, and loses any bank-line match, since
-// a planned entry isn't settled by anything. Returns how many changed.
+// Puts every entry in a month back to Planned, the same way setting each
+// one to Planned would: a bank-matched entry is unmatched as unlinkEntry
+// does (losing the bank's amount and date), any other posted entry loses
+// its posted date, and each goes back to the month of its planned date
+// when that month exists. Returns how many changed.
 export function resetMonthStatuses(state: AppState, month: CashFlowMonth): number {
+  const txnById = new Map(state.bankTransactions.map((t) => [t.id, t]));
+  const touched = new Set<CashFlowMonth>([month]);
   let changed = 0;
   for (const entry of state.cashFlowEntries) {
     if (entry.monthId !== month.id || entry.status === "planned") continue;
-    if (entry.postedDate) {
-      entry.postingDate = entry.postedDate;
-      delete entry.postedDate;
-    }
-    if (entry.bankTransactionId) {
-      detachEntries(state, new Set([entry.id]));
+    const txn = entry.bankTransactionId ? txnById.get(entry.bankTransactionId) : undefined;
+    if (txn) {
+      unlinkEntry(state, txn); // also moves it home and refreshes openings
+    } else {
       delete entry.bankTransactionId;
+      delete entry.postedDate;
+      const home = findMonthFor(state, month.accountId, entryDate(entry));
+      if (home) {
+        entry.monthId = home.id;
+        touched.add(home);
+      }
     }
     entry.status = "planned";
     changed++;
   }
+  for (const m of touched) refreshOpeningsFrom(state, m);
   return changed;
 }
 

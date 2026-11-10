@@ -98,10 +98,16 @@ export function isOverdue(entry: Pick<CashFlowEntry, "status" | "postedDate" | "
   return isOutstanding(entry) && entryDate(entry) < today;
 }
 
+// A payment is set up once it's Scheduled, or once it has a confirmation
+// number — typing one doesn't change the status, but the payment exists.
+export function isPaymentSetUp(entry: Pick<CashFlowEntry, "status" | "confirmationCode">): boolean {
+  return entry.status === "scheduled" || (entry.status === "planned" && !!entry.confirmationCode);
+}
+
 // Only manual bills ask to be scheduled — automatic (AD) and external (X)
-// items happen without you.
-export function needsScheduling(entry: Pick<CashFlowEntry, "status" | "kind" | "settlement">): boolean {
-  return entry.kind === "bill" && entry.status === "planned" && (entry.settlement ?? "manual") === "manual";
+// items happen without you, and one with a payment set up is handled.
+export function needsScheduling(entry: Pick<CashFlowEntry, "status" | "kind" | "settlement" | "confirmationCode">): boolean {
+  return entry.kind === "bill" && entry.status === "planned" && (entry.settlement ?? "manual") === "manual" && !entry.confirmationCode;
 }
 
 function signedCents(entry: CashFlowEntry): number {

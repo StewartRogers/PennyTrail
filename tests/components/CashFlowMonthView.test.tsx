@@ -238,6 +238,16 @@ describe("CashFlowMonthView", () => {
     expect(field.style.boxShadow).toContain("var(--border)");
   });
 
+  it("corrects only the actual amount of a bank-matched entry, keeping its projection", async () => {
+    const { month, entries } = october();
+    const matched = entries.map((x) => (x.name === "CIBC" ? { ...x, bankTransactionId: "t1" } : x));
+    renderView(makeAppState({ bankAccounts: [account], cashFlowMonths: [month], cashFlowEntries: matched }));
+    const cibc = screen.getByLabelText("Amount of CIBC");
+    fireEvent.change(cibc, { target: { value: "222.50" } });
+    fireEvent.blur(cibc);
+    await waitFor(() => expect(updateCashFlowEntry).toHaveBeenCalledWith("CIBC", { actualAmount: 222.5 }));
+  });
+
   it("doesn't save an unchanged amount", async () => {
     const { month, entries } = october();
     renderView(makeAppState({ bankAccounts: [account], cashFlowMonths: [month], cashFlowEntries: entries }));

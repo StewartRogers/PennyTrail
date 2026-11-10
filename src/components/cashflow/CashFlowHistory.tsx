@@ -1,6 +1,6 @@
 "use client";
 
-import { Fragment, useMemo, useRef, useState } from "react";
+import { Fragment, useMemo, useState } from "react";
 import type { AppState } from "@/lib/types";
 import { importCashFlowHistory } from "@/lib/api";
 import { entriesForMonth, summarizeMonth } from "@/lib/cashflow";
@@ -9,7 +9,7 @@ import { MIN_MONTHS_FOR_ITEM, applyKeyMap, normalizeItemName, parseBudgetSheet, 
 import { fmtCurrency } from "@/lib/format";
 import { useToast } from "../ToastContext";
 import { PageTitle, PrimaryButton, SecondaryButton } from "../ui";
-import { SETTLEMENT_LABELS, Tag, describeRecurrence, errorMessage, longMonthLabel, monthsForAccount, tdStyle, thStyle, todayIso } from "./shared";
+import { FilePicker, SETTLEMENT_LABELS, Tag, describeRecurrence, errorMessage, longMonthLabel, monthsForAccount, tdStyle, thStyle, todayIso } from "./shared";
 
 export function CashFlowHistory({ appState, onReload, accountId, onOpenMonth }: { appState: AppState; onReload: () => Promise<void>; accountId: string; onOpenMonth: (monthKey: string) => void }) {
   const months = monthsForAccount(appState.cashFlowMonths, accountId).reverse();
@@ -111,9 +111,7 @@ interface Loaded {
 function HistoryImport({ appState, accountId, onReload, onClose }: { appState: AppState; accountId: string; onReload: () => Promise<void>; onClose: () => void }) {
   const pushToast = useToast();
   const [loaded, setLoaded] = useState<Loaded | null>(null);
-  const [reading, setReading] = useState(false);
-  const [chosenName, setChosenName] = useState("");
-  const fileInput = useRef<HTMLInputElement>(null);
+  const [readingName, setReadingName] = useState<string | null>(null);
   const [oneOff, setOneOff] = useState<Set<string>>(new Set());
   const [keyMap, setKeyMap] = useState<Record<string, string>>({});
   const [open, setOpen] = useState<string | null>(null);
@@ -144,8 +142,7 @@ function HistoryImport({ appState, accountId, onReload, onClose }: { appState: A
     });
 
   async function onFile(file: File) {
-    setChosenName(file.name);
-    setReading(true);
+    setReadingName(file.name);
     try {
       const sheets = (await readXlsx(await file.arrayBuffer())).filter((s) => !s.hidden).map((s) => ({ name: s.name, rows: compactRows(s.rows) }));
       const parsed: ParsedMonth[] = [];
@@ -162,7 +159,7 @@ function HistoryImport({ appState, accountId, onReload, onClose }: { appState: A
     } catch (err) {
       pushToast(errorMessage(err, "Couldn't read that file"));
     } finally {
-      setReading(false);
+      setReadingName(null);
     }
   }
 
@@ -198,28 +195,17 @@ function HistoryImport({ appState, accountId, onReload, onClose }: { appState: A
         In Google Sheets choose <b>File → Download → Microsoft Excel (.xlsx)</b>, then pick that file here. Each worksheet becomes a month: Weekly Spend rows set each period&apos;s
         spend, END OF WEEK rows its recorded balance, and every other row an entry. Nothing is saved until you import, and months you already have are never overwritten.
       </div>
-      <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
-        <SecondaryButton onClick={() => fileInput.current?.click()} disabled={reading}>
-          {chosenName ? "Choose a different file" : "Choose .xlsx file"}
-        </SecondaryButton>
-        <span style={{ fontSize: 13.5, color: chosenName ? "var(--text)" : "var(--muted)", overflowWrap: "anywhere" }}>
-          {reading ? `Reading ${chosenName}…` : chosenName || "No file chosen"}
-        </span>
-        <input
-          ref={fileInput}
-          aria-label="Workbook file"
-          type="file"
-          accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-          disabled={reading}
-          onChange={(e) => {
-            const file = e.target.files?.[0];
-            // Cleared so picking the same file again still fires onChange.
-            e.target.value = "";
-            if (file) onFile(file);
-          }}
-          style={{ display: "none" }}
-        />
-      </div>
+      {/* Names the workbook the preview below is built from, so a file that
+          fails to read never replaces the name of the one still loaded. */}
+      <FilePicker
+        ariaLabel="Workbook file"
+        accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        buttonLabel="Choose .xlsx file"
+        fileName={loaded?.fileName ?? ""}
+        status={readingName ? `Reading ${readingName}…` : undefined}
+        disabled={readingName !== null}
+        onFile={onFile}
+      />
 
       {loaded && (
         <div style={{ marginTop: 16 }}>

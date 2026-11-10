@@ -6,6 +6,7 @@ import {
   expectedAmountFor,
   generateMonthEntries,
   isOverdue,
+  isPaymentSetUp,
   needsScheduling,
   periodIndexForDate,
   periodSpans,
@@ -155,6 +156,15 @@ describe("entry helpers", () => {
     expect(needsScheduling({ kind: "bill", status: "planned", settlement: "external" })).toBe(false);
     expect(needsScheduling({ kind: "bill", status: "scheduled", settlement: "manual" })).toBe(false);
     expect(needsScheduling({ kind: "deposit", status: "planned", settlement: "manual" })).toBe(false);
+    // A confirmation number means the payment is set up, whatever the status says.
+    expect(needsScheduling({ kind: "bill", status: "planned", settlement: "manual", confirmationCode: "136266" })).toBe(false);
+  });
+
+  it("treats a confirmation number on a planned entry as a payment set up", () => {
+    expect(isPaymentSetUp({ status: "scheduled" })).toBe(true);
+    expect(isPaymentSetUp({ status: "planned", confirmationCode: "136266" })).toBe(true);
+    expect(isPaymentSetUp({ status: "planned" })).toBe(false);
+    expect(isPaymentSetUp({ status: "posted", confirmationCode: "136266" })).toBe(false);
   });
 
   it("calls an outstanding entry overdue once its date has passed, scheduled or not", () => {

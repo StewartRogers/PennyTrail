@@ -1,11 +1,12 @@
 "use client";
 
-import { useState, type CSSProperties, type ReactNode } from "react";
+import { useRef, useState, type CSSProperties, type ReactNode } from "react";
 import type { BankAccount, CashFlowEntry, CashFlowMonth, DayOfMonth, EntryStatus, Recurrence, Settlement } from "@/lib/types";
 import { parseAmount } from "@/lib/csv";
 import { fmtCurrency, toISODate } from "@/lib/format";
 import { isOverdue, needsScheduling } from "@/lib/cashflow";
 import { addDays } from "@/lib/dates";
+import { SecondaryButton } from "../ui";
 
 export function todayIso(): string {
   return toISODate(new Date());
@@ -250,6 +251,51 @@ export function ConfirmButton({ label, confirmLabel, onConfirm, title }: { label
     </span>
   ) : (
     <SmallButton title={title} tone="danger" onClick={() => setArmed(true)}>{label}</SmallButton>
+  );
+}
+
+// A "Choose file" button standing in for the browser's Browse… control,
+// with the file's name beside it. `fileName` is the file in use (what the
+// screen below is showing), `status` overrides it while reading. The input
+// is cleared after each pick so choosing the same file again still fires.
+export function FilePicker({
+  ariaLabel,
+  accept,
+  buttonLabel,
+  fileName,
+  status,
+  disabled,
+  onFile,
+}: {
+  ariaLabel: string;
+  accept: string;
+  buttonLabel: string;
+  fileName: string;
+  status?: string;
+  disabled?: boolean;
+  onFile: (file: File) => void;
+}) {
+  const input = useRef<HTMLInputElement>(null);
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+      <SecondaryButton onClick={() => input.current?.click()} disabled={disabled}>
+        {fileName ? "Choose a different file" : buttonLabel}
+      </SecondaryButton>
+      <span style={{ fontSize: 13.5, color: status || fileName ? "var(--text)" : "var(--muted)", overflowWrap: "anywhere" }}>{status || fileName || "No file chosen"}</span>
+      <input
+        ref={input}
+        aria-label={ariaLabel}
+        type="file"
+        accept={accept}
+        disabled={disabled}
+        onChange={(e) => {
+          const file = e.target.files?.[0];
+          e.target.value = "";
+          if (file) onFile(file);
+        }}
+        style={{ display: "none" }}
+      />
+    </div>
   );
 }
 

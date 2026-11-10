@@ -132,7 +132,7 @@ function StartMonthPanel({
 
   async function start() {
     await run(
-      () => startCashFlowMonth({ accountId, month: monthKey, ...(carried === null && parsed !== null ? { openingBalance: parsed } : {}) }),
+      () => startCashFlowMonth({ accountId, month: monthKey, ...(parsed !== null ? { openingBalance: parsed } : {}) }),
       `Started ${longMonthLabel(monthKey)}`
     ).catch(() => {});
   }
@@ -262,7 +262,7 @@ function StartedMonth({ appState, month, run, today }: { appState: AppState; mon
           <ConfirmButton
             label="Set all to Planned"
             confirmLabel={`Set ${notPlanned} entr${notPlanned === 1 ? "y" : "ies"} back to Planned`}
-            title="Puts every entry in this month back to Planned. Amounts and confirmation numbers are kept; bank-line matches are undone."
+            title="Puts every entry in this month back to Planned, as if each were set to Planned by hand. Confirmation numbers are kept; bank-line matches are undone, and matched entries go back to their projected amount and date."
             onConfirm={() => run(() => updateCashFlowMonth(month.id, { resetStatuses: true }), "Every entry is Planned").catch(() => {})}
           />
         )}
@@ -501,14 +501,16 @@ function EntryRowView({ row, run, today }: { row: EntryRow; run: Run; today: str
 
 // The CREDIT or DEBIT cell: one amount, the projection until you type or
 // paste the real figure over it. Saving it makes that the entry's only
-// amount, so a stale actual (e.g. from a bank match) can't shadow it.
+// amount, so a stale actual can't shadow it — except on a bank-matched
+// entry, where it corrects the actual and keeps the projection, which
+// unmatching falls back to.
 function AmountCell({ entry: e, update }: { entry: CashFlowEntry; update: (patch: Parameters<typeof updateCashFlowEntry>[1]) => Promise<void> }) {
   return (
     <td style={{ ...tdStyle, width: 120 }}>
       <MoneyCell
         ariaLabel={`Amount of ${e.name}`}
         value={entryAmount(e)}
-        onCommit={(v) => update({ expectedAmount: v ?? 0, actualAmount: null })}
+        onCommit={(v) => update(e.bankTransactionId ? { actualAmount: v ?? 0 } : { expectedAmount: v ?? 0, actualAmount: null })}
         style={{ color: e.kind === "deposit" ? "var(--positive)" : "var(--text)" }}
       />
     </td>
