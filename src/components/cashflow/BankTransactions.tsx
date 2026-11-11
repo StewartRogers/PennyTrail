@@ -52,7 +52,7 @@ export function BankTransactions({ appState, onReload, accountId }: { appState: 
         <div style={{ background: "var(--panel)", border: "1px solid var(--border)", borderRadius: 12, marginBottom: 18, overflowX: "auto" }}>
           <div style={{ padding: "12px 16px 4px", display: "flex", gap: 10, alignItems: "baseline", flexWrap: "wrap" }}>
             <div style={{ fontSize: 14, fontWeight: 600 }}>Suggested matches · {suggestions.length}</div>
-            <div style={{ fontSize: 12, color: "var(--muted)" }}>Confirming marks the entry posted on the bank line&apos;s date, for its amount.</div>
+            <div style={{ fontSize: 12, color: "var(--muted)" }}>Confirming puts the bank line&apos;s date and amount on the entry. Its status stays as it is — set it to Actual yourself.</div>
           </div>
           <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5, minWidth: 820 }}>
             <thead>

@@ -1,5 +1,6 @@
 import type { Category, ChildVendor, ParentVendor, Transaction } from "./types";
 import { monthKey } from "./format";
+import { bcYearMonth } from "./bcTime";
 import { netAmountForTransaction } from "./vendors";
 
 // Trailing N *complete* periods ending at the last fully-elapsed one — the
@@ -9,22 +10,24 @@ import { netAmountForTransaction } from "./vendors";
 // chart is always a stable calendar window, not a function of which months
 // happen to have data.
 export function trailingPeriodKeys(group: "month" | "quarter" | "year", count: number): string[] {
-  const now = new Date();
+  // The current period is BC's, not the device's (see bcTime.ts).
+  const { year, month } = bcYearMonth();
+  const monthIndex = month - 1;
   const keys: string[] = [];
   if (group === "month") {
     for (let i = count; i >= 1; i--) {
-      const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+      const d = new Date(year, monthIndex - i, 1);
       keys.push(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`);
     }
   } else if (group === "quarter") {
-    const currentQuarterStartMonth = Math.floor(now.getMonth() / 3) * 3;
+    const currentQuarterStartMonth = Math.floor(monthIndex / 3) * 3;
     for (let i = count; i >= 1; i--) {
-      const d = new Date(now.getFullYear(), currentQuarterStartMonth - i * 3, 1);
+      const d = new Date(year, currentQuarterStartMonth - i * 3, 1);
       keys.push(`${d.getFullYear()}-Q${Math.floor(d.getMonth() / 3) + 1}`);
     }
   } else {
     for (let i = count; i >= 1; i--) {
-      keys.push(String(now.getFullYear() - i));
+      keys.push(String(year - i));
     }
   }
   return keys;

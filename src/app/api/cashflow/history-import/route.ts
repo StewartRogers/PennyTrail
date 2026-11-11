@@ -4,7 +4,7 @@ import { uid } from "@/lib/id";
 import { readJsonObject, readString } from "@/lib/request";
 import { readIsoDate } from "@/lib/cashflowRequest";
 import { applyKeyMap, buildHistoryImport, parseBudgetSheet, seedItems, type ParsedMonth, type SheetCell } from "@/lib/historyImport";
-import { toISODate } from "@/lib/format";
+import { bcTodayIso } from "@/lib/bcTime";
 import { refreshOpeningsFrom } from "@/lib/cashflowState";
 
 // The workbook goes back to January 2024 — dozens of sheets of a few dozen
@@ -49,9 +49,9 @@ export async function POST(request: Request) {
   const body = await readJsonObject(request);
   const accountId = readString(body.accountId);
   const sheets = readSheets(body.sheets);
-  // The user's own calendar day decides what's "past" (posted) and what's
-  // still planned; the server's clock may sit in another timezone.
-  const today = body.today === undefined ? toISODate(new Date()) : readIsoDate(body.today);
+  // BC's calendar day decides what's past (Actual) and what's still
+  // Projected — not the server's, which on Vercel runs in UTC.
+  const today = body.today === undefined ? bcTodayIso() : readIsoDate(body.today);
   const oneOffKeys = Array.isArray(body.oneOffKeys) && body.oneOffKeys.every((k: unknown) => typeof k === "string") ? new Set<string>(body.oneOffKeys) : body.oneOffKeys === undefined ? new Set<string>() : null;
   // "Same item as…" choices: name key → the key it merges into.
   const keyMap =
@@ -99,10 +99,9 @@ export async function POST(request: Request) {
     state.cashFlowItems.push(...plan.items);
     state.cashFlowMonths.push(...plan.months);
     state.cashFlowEntries.push(...plan.entries);
-    // A month already in the store right after the import may carry its
-    // opening from the last imported month.
-    const last = plan.months[plan.months.length - 1];
-    if (last) refreshOpeningsFrom(state, last);
+    // A month already in the store right after any imported month (the
+    // import can fill a gap, not just the end) may carry its opening from it.
+    for (const month of plan.months) refreshOpeningsFrom(state, month);
     return {
       importedMonths: plan.months.length,
       entries: plan.entries.length,

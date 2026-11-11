@@ -175,22 +175,19 @@ Mappings are shared by both sides. The design is in
 
 - **This Month** — the spreadsheet view: three periods ending on the first
   Friday, second Friday, and month end, each opening with a Weekly Spend of
-  the daily rate × its days, then its bills and deposits (status, scheduled
-  date, confirmation number, running balance), then the checkpoint where the
-  real balance is entered and the variance shows. Payments land on their
-  business-day posting date (weekends and the account's bank holidays).
-- **Upcoming** — overdue, needs scheduling, scheduled-but-not-posted, and
-  expected items across months. Done means posted.
-- **Spending** — debit spending from imported bank lines per period, next to
-  the estimate and the spend implied by each checkpoint.
+  the daily rate × its days, then its withdrawals (−) and deposits (+) with a
+  status, confirmation number, and running balance, then the checkpoint where
+  the real balance is entered. A status is Projected, Actual, or Skipped —
+  just an indicator of whether the amount has been confirmed: a past month is
+  all Actual, the current one a mix. Recording the end-of-month balance
+  closes the month. Payments land on their business-day posting date
+  (weekends and the account's bank holidays).
 - **Bank Transactions / Import Bank CSV** — the chequing export (Date,
   Transaction Details, Funds Out, Funds In), classified from its details
   prefixes, with suggested matches to planned entries.
 - **Recurring Items** — bills and deposits and their schedules (monthly, twice
   a month, every N months, every N weeks, once). Edits apply to months
   started afterwards.
-- **History** — every month's totals, plus the one-time import of the
-  spreadsheet workbook (.xlsx, one sheet per month) with a preview.
 - **Accounts** — the bank account, its daily spend rate, low-balance
   warning, and bank holiday list.
 

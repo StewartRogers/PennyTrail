@@ -112,7 +112,20 @@ This block is written and re-added by `next dev` — verify at `node_modules/nex
   `openingSource` is `"carried"` follows the previous month's close, so any
   route that changes a month must call `refreshOpeningsFrom` (see
   `src/lib/cashflowState.ts`). Deleting a month needs `{ confirm: true }`;
-  wiping bank lines needs `{ all: true }`.
+  wiping bank lines needs `{ all: true }`. Entry statuses are `projected`,
+  `actual`, and `skipped` — indicators of whether an amount has been
+  confirmed, nothing more; `normalizeState` maps the retired `planned` /
+  `scheduled` / `posted` on read, so don't reintroduce them. Only the user
+  changes a status: nothing (bank matching, unmatching, editing a date or
+  amount) may set one as a side effect.
+- **Dates and times are BC's, via `src/lib/bcTime.ts`.** BC's year-round
+  single time standard is Pacific Time, abbreviated PCT (UTC−7 year-round
+  since 8 March 2026); times are shown with "PCT". Don't use the
+  runtime's zone for "today" or for showing a time: on Vercel the server is
+  in UTC, and a device's or server's tz data may still fall back in
+  November. Use `bcTodayIso` / `bcYearMonth` / `fmtBcDateTime`; store
+  instants as UTC ISO strings. The final
+  checkpoint sits on the month's last day, and recording it closes the month.
 - **Design fidelity**: the UI was ported from a Claude Design handoff
   (dashboard, import wizard, transactions, categories, cards, templates
   screens) — OKLCH color tokens, Public Sans + IBM Plex Mono fonts, exact

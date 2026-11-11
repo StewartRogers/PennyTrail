@@ -183,15 +183,20 @@ convenience only, not data.
     balance input, and the variance (actual minus projected, plus the
     implied actual spend).
 - **Statuses:**
-  - `planned`
-  - `scheduled`: date and confirmation code recorded
-  - `posted`: the bank has posted it
+  - `projected`: the amount is still a projection
+  - `actual`: the deposit or withdrawal happened and its amount is confirmed
   - `skipped`: not due this month
 
-  **An item is done only once it has posted.** A scheduled item still
-  counts as outstanding and shows as "scheduled, not yet posted". Overdue
-  items (past their expected posting date and not posted) use the
-  attention colour. Posted rows are muted.
+  The statuses are only indicators for confirming each real amount. A past
+  month is all Actual; the current month is a mix. (As built these replaced
+  the original `planned` / `scheduled` / `posted`: `scheduled` was folded
+  into `projected`, and a payment that is set up is recognised by its
+  confirmation number or scheduling date. Older stores are mapped on read.
+  Where the rest of this plan says planned, scheduled, or posted, read
+  Projected, Projected-with-a-payment-set-up, and Actual.)
+
+  A Projected item past its expected posting date is overdue and uses the
+  attention colour. Actual rows are muted.
 - **Quick actions on a row:** Schedule, which takes a date, an optional
   confirmation code, and the actual amount if it differs; Mark posted,
   which takes the posted date and the actual amount; Skip; Edit; Move to
@@ -344,7 +349,7 @@ export interface CashFlowMonth {
   importedFrom?: string;   // worksheet name, for months brought in from the spreadsheet
 }
 
-export type EntryStatus = "planned" | "scheduled" | "posted" | "skipped";
+export type EntryStatus = "projected" | "actual" | "skipped";
 
 export interface CashFlowEntry {        // one occurrence in one month
   id: string;

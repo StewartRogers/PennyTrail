@@ -15,7 +15,7 @@ describe("POST /api/cashflow/entries", () => {
     const { month } = await october();
     const { status, body } = await addEntry({ monthId: month.id, name: "AMEX", kind: "bill", postingDate: "2026-10-19", expectedAmount: 1571.06 });
     expect(status).toBe(201);
-    expect(body).toMatchObject({ itemId: null, status: "planned", settlement: "manual", dueDate: "2026-10-19", postingDate: "2026-10-19", expectedAmount: 1571.06 });
+    expect(body).toMatchObject({ itemId: null, status: "projected", settlement: "manual", dueDate: "2026-10-19", postingDate: "2026-10-19", expectedAmount: 1571.06 });
   });
 
   it("rejects a date outside the month, a bad amount, and an unknown month", async () => {
@@ -43,20 +43,53 @@ describe("PATCH /api/cashflow/entries/[id]", () => {
 
   it("schedules with a date and confirmation number", async () => {
     const { entry: e } = await entry();
-    const { body } = await patchEntry(e.id, { status: "scheduled", scheduledDate: "2026-10-05", confirmationCode: " 104237 " });
-    expect(body).toMatchObject({ status: "scheduled", scheduledDate: "2026-10-05", confirmationCode: "104237" });
+    const { body } = await patchEntry(e.id, { scheduledDate: "2026-10-05", confirmationCode: " 104237 " });
+    expect(body).toMatchObject({ status: "projected", scheduledDate: "2026-10-05", confirmationCode: "104237" });
+  });
+
+  it("no longer accepts the retired statuses", async () => {
+    const { entry: e } = await entry();
+    for (const status of ["planned", "scheduled", "posted"]) expect((await patchEntry(e.id, { status })).status).toBe(400);
   });
 
   it("posts on the expected date by default, or on the date given", async () => {
     const { entry: e } = await entry();
-    expect((await patchEntry(e.id, { status: "posted" })).body.postedDate).toBe("2026-10-09");
+    expect((await patchEntry(e.id, { status: "actual" })).body.postedDate).toBe("2026-10-09");
     expect((await patchEntry(e.id, { postedDate: "2026-10-13" })).body.postedDate).toBe("2026-10-13");
+  });
+
+  it("stamps a confirmation number with when it was entered", async () => {
+    const { entry: e } = await entry();
+    const before = Date.now();
+    const first = (await patchEntry(e.id, { confirmationCode: "104237" })).body;
+    const stamped = Date.parse(first.confirmationRecordedAt);
+    expect(stamped).toBeGreaterThanOrEqual(before - 1000);
+    expect(stamped).toBeLessThanOrEqual(Date.now() + 1000);
+    // The same number again, or another edit, keeps the time.
+    expect((await patchEntry(e.id, { confirmationCode: "104237" })).body.confirmationRecordedAt).toBe(first.confirmationRecordedAt);
+    expect((await patchEntry(e.id, { notes: "n" })).body.confirmationRecordedAt).toBe(first.confirmationRecordedAt);
+    // A new number gets a new time; clearing it removes both.
+    await new Promise((r) => setTimeout(r, 5));
+    const second = (await patchEntry(e.id, { confirmationCode: "104999" })).body;
+    expect(second.confirmationCode).toBe("104999");
+    expect(second.confirmationRecordedAt > first.confirmationRecordedAt).toBe(true);
+    const cleared = (await patchEntry(e.id, { confirmationCode: "" })).body;
+    expect(cleared.confirmationCode).toBeUndefined();
+    expect(cleared.confirmationRecordedAt).toBeUndefined();
+  });
+
+  it("moves the due date along with a date changed by hand", async () => {
+    const { entry: e } = await entry();
+    expect((await patchEntry(e.id, { postingDate: "2026-10-13" })).body).toMatchObject({ postingDate: "2026-10-13", dueDate: "2026-10-13" });
+    expect((await patchEntry(e.id, { status: "actual", postedDate: "2026-10-14" })).body).toMatchObject({ postedDate: "2026-10-14", dueDate: "2026-10-14" });
+    // Changing something else leaves it alone.
+    expect((await patchEntry(e.id, { notes: "paid online" })).body.dueDate).toBe("2026-10-14");
   });
 
   it("clears the posted date when it's no longer posted", async () => {
     const { entry: e } = await entry();
-    await patchEntry(e.id, { status: "posted", postedDate: "2026-10-10", actualAmount: 123.57 });
-    const { body } = await patchEntry(e.id, { status: "scheduled" });
+    await patchEntry(e.id, { status: "actual", postedDate: "2026-10-10", actualAmount: 123.57 });
+    const { body } = await patchEntry(e.id, { status: "projected" });
     expect(body.postedDate).toBeUndefined();
     expect(body.actualAmount).toBe(123.57); // the amount correction stays
   });
@@ -74,17 +107,17 @@ describe("PATCH /api/cashflow/entries/[id]", () => {
   it("moves an entry that posted in the next month into that month", async () => {
     const { account, entry: e } = await entry();
     const { body: nov } = await startMonth({ accountId: account.id, month: "2026-11" });
-    const { status, body } = await patchEntry(e.id, { status: "posted", postedDate: "2026-11-02" });
+    const { status, body } = await patchEntry(e.id, { status: "actual", postedDate: "2026-11-02" });
     expect(status).toBe(200);
     expect(body.monthId).toBe(nov.month.id);
   });
 
   it("refuses a date in a month that hasn't been started, and saves nothing", async () => {
     const { entry: e } = await entry();
-    const res = await patchEntry(e.id, { status: "posted", postedDate: "2026-11-02", actualAmount: 999 });
+    const res = await patchEntry(e.id, { status: "actual", postedDate: "2026-11-02", actualAmount: 999 });
     expect(res.status).toBe(400);
     const stored = (await readStore()).cashFlowEntries[0];
-    expect(stored).toMatchObject({ status: "planned", expectedAmount: 120 });
+    expect(stored).toMatchObject({ status: "projected", expectedAmount: 120 });
     expect(stored.actualAmount).toBeUndefined();
   });
 
@@ -101,7 +134,7 @@ describe("PATCH /api/cashflow/entries/[id]", () => {
   });
 
   it("returns 404 for an unknown entry", async () => {
-    expect((await patchEntry("nope", { status: "posted" })).status).toBe(404);
+    expect((await patchEntry("nope", { status: "actual" })).status).toBe(404);
   });
 });
 

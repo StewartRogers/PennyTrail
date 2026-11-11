@@ -137,30 +137,31 @@ describe("parseBudgetSheet", () => {
     const m = parseOk("Oct 26", octoberSheet(), "2026-11-05");
     const pick = (e: ParsedEntry) => [e.name, e.status, e.settlement, e.confirmationCode];
     expect(m.entries.map(pick)).toEqual([
-      ["152 Rent (first)", "posted", "manual", undefined], // 9999999999 is a placeholder
-      ["Stewart Pay", "posted", "auto", undefined],
-      ["152 Rent (second)", "posted", "manual", "106126052602"],
-      ["CIBC (Visa)", "posted", "manual", undefined],
+      ["152 Rent (first)", "actual", "manual", undefined], // 9999999999 is a placeholder
+      ["Stewart Pay", "actual", "auto", undefined],
+      ["152 Rent (second)", "actual", "manual", "106126052602"],
+      ["CIBC (Visa)", "actual", "manual", undefined],
       ["RBC AVION (Visa)", "skipped", "external", undefined],
       ["Child Tax Benefit", "skipped", "external", undefined],
-      ["Simplii (Visa)", "posted", "manual", undefined],
-      ["152 Home Insurance", "posted", "auto", undefined],
-      ["Stewart Pay", "posted", "auto", undefined],
-      ["Kerri Pay", "posted", "auto", undefined],
-      ["AMEX", "posted", "manual", "136258"],
+      ["Simplii (Visa)", "actual", "manual", undefined],
+      ["152 Home Insurance", "actual", "auto", undefined],
+      ["Stewart Pay", "actual", "auto", undefined],
+      ["Kerri Pay", "actual", "auto", undefined],
+      ["AMEX", "actual", "manual", "136258"],
       ["PCF (Mastercard) - KA", "skipped", "external", undefined],
-      ["Child Tax Benefit", "posted", "external", undefined],
-      ["BC Hydro", "posted", "manual", "136266"],
-      ["Stewart Pay", "posted", "auto", undefined],
+      ["Child Tax Benefit", "actual", "external", undefined],
+      ["BC Hydro", "actual", "manual", "136266"],
+      ["Stewart Pay", "actual", "auto", undefined],
       ["Wealthsimple (Visa)", "skipped", "external", undefined],
-      ["Kerri Pay", "posted", "auto", undefined],
-      ["152 Rent (first)", "posted", "manual", "6156431232"],
+      ["Kerri Pay", "actual", "auto", undefined],
+      ["152 Rent (first)", "actual", "manual", "6156431232"],
     ]);
   });
 
-  it("brings the current month in all Planned, still reading settlement and confirmation number", () => {
+  it("brings the current month in as a mix: Actual up to today, Projected after", () => {
     const m = parseOk("Oct 26"); // today is 2026-10-18
-    expect(m.entries.every((e) => e.status === "planned")).toBe(true);
+    for (const e of m.entries.filter((x) => x.amount > 0)) expect([e.name, e.date, e.status]).toEqual([e.name, e.date, e.date <= "2026-10-18" ? "actual" : "projected"]);
+    expect(new Set(m.entries.map((e) => e.status))).toEqual(new Set(["actual", "projected", "skipped"]));
     const byName = (name: string) => m.entries.find((e) => e.name === name)!;
     expect([byName("RBC AVION (Visa)").settlement, byName("AMEX").confirmationCode]).toEqual(["external", "136258"]);
   });
@@ -208,7 +209,7 @@ describe("parseBudgetSheet", () => {
   it("treats every checkpoint as unrecorded for a future month", () => {
     const m = parseOk("Oct 26", octoberSheet(), "2026-09-15");
     expect(m.periods.every((p) => p.actualBalance === undefined)).toBe(true);
-    expect(m.entries.every((e) => e.status !== "posted")).toBe(true);
+    expect(m.entries.every((e) => e.status !== "actual")).toBe(true);
   });
 
   it("falls back to the sheet name when row 1 has no YEAR/MONTH", () => {
@@ -261,7 +262,7 @@ function syntheticHistory(): ParsedMonth[] {
       kind,
       date,
       amount,
-      status: amount === 0 ? "skipped" : date <= TODAY ? "posted" : "planned",
+      status: amount === 0 ? "skipped" : date <= TODAY ? "actual" : "projected",
       ...(settlement ? { settlement } : {}),
       ...(notes ? { notes } : {}),
     });
@@ -361,8 +362,8 @@ describe("seedItems", () => {
     expect(byName("Fortis").active).toBe(true);
   });
 
-  it("still sees the cancellation when the newest month came in all Planned", () => {
-    const months = syntheticHistory().map((m) => ({ ...m, entries: m.entries.map((e) => ({ ...e, status: "planned" as const })) }));
+  it("still sees the cancellation when the newest month came in all Projected", () => {
+    const months = syntheticHistory().map((m) => ({ ...m, entries: m.entries.map((e) => ({ ...e, status: "projected" as const })) }));
     const rbc = seedItems(months, holidays).find((s) => s.key === normalizeItemName("RBC AVION (Visa)").key)!;
     expect(rbc.active).toBe(false);
   });
@@ -400,7 +401,7 @@ describe("name mapping", () => {
       return {
         sheetName: m, month: m, openingBalance: 0, dailySpendRate: 50, warnings: [], balanceMismatches: [],
         periods: [{ row: 0, endDate: monthEnd(m), label: "End of month", spend: 0 }],
-        entries: [{ row: 1, name, key, ...(owner ? { owner } : {}), kind: "bill" as const, date: `${m}-23`, amount: 100 + i, status: "posted" as const, settlement: "manual" as const }],
+        entries: [{ row: 1, name, key, ...(owner ? { owner } : {}), kind: "bill" as const, date: `${m}-23`, amount: 100 + i, status: "actual" as const, settlement: "manual" as const }],
       };
     });
     expect(seedItems(months, holidays)).toEqual([]);
@@ -494,17 +495,21 @@ describe("buildHistoryImport", () => {
   it("creates a past month's entries with posted amounts and dates", () => {
     const plan = build();
     const sep = plan.months[0];
-    const posted = plan.entries.filter((e) => e.monthId === sep.id && e.status === "posted");
+    const posted = plan.entries.filter((e) => e.monthId === sep.id && e.status === "actual");
     expect(posted.length).toBeGreaterThan(0);
     for (const e of posted) expect(e).toMatchObject({ postedDate: e.postingDate, actualAmount: e.expectedAmount });
   });
 
-  it("creates the current month's entries all Planned, keeping confirmation numbers", () => {
+  it("creates the current month's entries as a mix, keeping confirmation numbers", () => {
     const plan = build();
     const oct = plan.months[1];
-    expect(plan.entries.filter((e) => e.monthId === oct.id).every((e) => e.status === "planned" && e.postedDate === undefined && e.actualAmount === undefined)).toBe(true);
-    const rent2 = plan.entries.find((e) => e.monthId === oct.id && e.name === "152 Rent (second)")!;
-    expect(rent2).toMatchObject({ expectedAmount: 2000, postingDate: "2026-10-01", confirmationCode: "106126052602", itemId: null });
+    const octEntries = plan.entries.filter((e) => e.monthId === oct.id);
+    for (const e of octEntries.filter((x) => x.status === "actual")) expect(e).toMatchObject({ postedDate: e.postingDate, actualAmount: e.expectedAmount });
+    const ahead = octEntries.filter((e) => e.status === "projected");
+    expect(ahead.length).toBeGreaterThan(0);
+    expect(ahead.every((e) => e.postedDate === undefined && e.actualAmount === undefined)).toBe(true);
+    const rent2 = octEntries.find((e) => e.name === "152 Rent (second)")!;
+    expect(rent2).toMatchObject({ status: "actual", expectedAmount: 2000, postingDate: "2026-10-01", confirmationCode: "106126052602", itemId: null });
   });
 
   it("links entries to seeded items and creates those items", () => {

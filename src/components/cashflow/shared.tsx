@@ -1,15 +1,16 @@
 "use client";
 
-import { useRef, useState, type CSSProperties, type ReactNode } from "react";
+import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import type { BankAccount, CashFlowEntry, CashFlowMonth, DayOfMonth, EntryStatus, Recurrence, Settlement } from "@/lib/types";
 import { parseAmount } from "@/lib/csv";
-import { fmtCurrency, toISODate } from "@/lib/format";
-import { isOverdue, needsScheduling } from "@/lib/cashflow";
-import { addDays } from "@/lib/dates";
-import { SecondaryButton } from "../ui";
+import { fmtCurrency } from "@/lib/format";
+import { bcTodayIso, fmtBcDateTime } from "@/lib/bcTime";
+import { isValidIsoDate } from "@/lib/request";
+import { PrimaryButton, SecondaryButton } from "../ui";
 
+// Today in BC, whatever time zone the device is set to (see bcTime.ts).
 export function todayIso(): string {
-  return toISODate(new Date());
+  return bcTodayIso();
 }
 
 export function currentMonthKey(): string {
@@ -65,22 +66,25 @@ export const SETTLEMENT_LABELS: Record<Settlement, string> = {
 };
 
 export const STATUS_LABELS: Record<EntryStatus, string> = {
-  planned: "Planned",
-  scheduled: "Scheduled",
-  posted: "Posted",
+  projected: "Projected",
+  actual: "Actual",
   skipped: "Skipped",
 };
 
-export function statusColor(entry: Pick<CashFlowEntry, "status" | "postedDate" | "postingDate">, today: string): string {
-  if (isOverdue(entry, today)) return "var(--attention)";
-  if (entry.status === "posted") return "var(--positive)";
-  if (entry.status === "scheduled") return "var(--accent)";
-  return "var(--muted)";
+// Just the status itself — whether a Projected entry is past its date isn't shown.
+export function statusColor(entry: Pick<CashFlowEntry, "status">): string {
+  return entry.status === "actual" ? "var(--positive)" : "var(--muted)";
 }
 
 // Signed for display: deposits read "+$3,000.00".
 export function signedAmount(amount: number, kind: "bill" | "deposit"): string {
   return (kind === "deposit" ? "+" : "−") + fmtCurrency(amount).replace("-", "");
+}
+
+// Money leaving the account, shown negative: "−$1,500.00". A negative
+// outflow (spend that came out as a net gain) reads "+$20.00".
+export function outflowAmount(amount: number): string {
+  return (amount < 0 ? "+" : "−") + fmtCurrency(Math.abs(amount));
 }
 
 export function parseMoneyInput(text: string): number | null {
@@ -90,13 +94,6 @@ export function parseMoneyInput(text: string): number | null {
 
 export function moneyText(n: number | undefined): string {
   return n === undefined ? "" : n.toFixed(2);
-}
-
-// What Upcoming and the sidebar badge count: overdue, or a manual bill
-// still to schedule within the next week.
-export function attentionCount(entries: CashFlowEntry[], today: string): number {
-  const horizon = addDays(today, 7);
-  return entries.filter((e) => isOverdue(e, today) || (needsScheduling(e) && (e.postedDate ?? e.postingDate) <= horizon)).length;
 }
 
 export function monthsForAccount(months: CashFlowMonth[], accountId: string | null): CashFlowMonth[] {
@@ -134,6 +131,8 @@ export function MoneyCell({
   allowNegative = false,
   placeholder,
   ariaLabel,
+  title,
+  format,
   style,
 }: {
   value: number | undefined;
@@ -142,10 +141,14 @@ export function MoneyCell({
   allowNegative?: boolean;
   placeholder?: string;
   ariaLabel: string;
+  title?: string;
+  // How the stored value reads while it isn't being edited ("$1,234.50"
+  // rather than "1234.50"); the typed text is parsed either way.
+  format?: (value: number) => string;
   style?: CSSProperties;
 }) {
   const [draft, setDraft] = useState<string | null>(null);
-  const shown = draft ?? moneyText(value);
+  const shown = draft ?? (format && value !== undefined ? format(value) : moneyText(value));
   // The typed text stays on screen until the save (and the reload after it)
   // finishes, then gives way to the stored value — which is the old one if
   // the save failed.
@@ -169,6 +172,7 @@ export function MoneyCell({
       className="inline-editable"
       inputMode="decimal"
       value={shown}
+      title={title}
       placeholder={placeholder}
       onChange={(e) => setDraft(e.target.value)}
       onBlur={commit}
@@ -186,12 +190,14 @@ export function TextCell({
   onCommit,
   placeholder,
   ariaLabel,
+  title,
   style,
 }: {
   value: string | undefined;
   onCommit: (value: string) => Promise<void>;
   placeholder?: string;
   ariaLabel: string;
+  title?: string;
   style?: CSSProperties;
 }) {
   const [draft, setDraft] = useState<string | null>(null);
@@ -206,6 +212,7 @@ export function TextCell({
       aria-label={ariaLabel}
       className="inline-editable"
       value={draft ?? value ?? ""}
+      title={title}
       placeholder={placeholder}
       onChange={(e) => setDraft(e.target.value)}
       onBlur={commit}
@@ -214,6 +221,245 @@ export function TextCell({
         if (e.key === "Escape") setDraft(null);
       }}
       style={{ ...cellInput, ...style }}
+    />
+  );
+}
+
+// An in-app yes/no dialog (not the browser's confirm()). Escape or a click
+// outside cancels.
+export function ConfirmDialog({
+  title,
+  children,
+  confirmLabel,
+  onConfirm,
+  onCancel,
+}: {
+  title: string;
+  children: ReactNode;
+  confirmLabel: string;
+  onConfirm: () => void;
+  onCancel: () => void;
+}) {
+  useEffect(() => {
+    function onKeyDown(e: KeyboardEvent) {
+      if (e.key === "Escape") onCancel();
+    }
+    document.addEventListener("keydown", onKeyDown);
+    return () => document.removeEventListener("keydown", onKeyDown);
+  }, [onCancel]);
+  return (
+    <div
+      onClick={onCancel}
+      style={{ position: "fixed", inset: 0, background: "oklch(0 0 0 / 0.4)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 50, padding: 24 }}
+    >
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-label={title}
+        onClick={(e) => e.stopPropagation()}
+        style={{ background: "var(--panel)", borderRadius: 14, width: "100%", maxWidth: 440, padding: "20px 22px" }}
+      >
+        <div style={{ fontSize: 16, fontWeight: 600, marginBottom: 8 }}>{title}</div>
+        <div style={{ fontSize: 13.5, color: "var(--text)", marginBottom: 18 }}>{children}</div>
+        <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
+          <SecondaryButton onClick={onCancel}>Cancel</SecondaryButton>
+          <PrimaryButton onClick={onConfirm}>{confirmLabel}</PrimaryButton>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// Stored as a UTC instant; always shown on BC's clock.
+export function fmtRecordedAt(iso: string): string {
+  return fmtBcDateTime(iso);
+}
+
+// The Confirmation # cell. Empty, it's a field: whatever is pasted is saved
+// at once (typing saves on Enter or leaving the field). Once it holds a value
+// it's read-only text, with an ⓘ showing when the number was entered (only
+// when that time is known) and a ✎
+// to change it — and replacing or removing a value asks first.
+export function ConfirmationCell({
+  name,
+  value,
+  recordedAt,
+  showInfo,
+  onCommit,
+}: {
+  name: string;
+  value: string | undefined;
+  recordedAt: string | undefined;
+  // Only real confirmation numbers have an entry time; AD and X don't.
+  showInfo: boolean;
+  onCommit: (text: string) => Promise<void>;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [pending, setPending] = useState<string | null>(null);
+  const isCode = value === "AD" || value === "X";
+  const same = (text: string) => text === value || (isCode && text.toUpperCase() === value);
+
+  function finishEdit(text: string | null) {
+    if (text === null || same(text)) setEditing(false);
+    else setPending(text); // ask before replacing (or removing, when empty)
+  }
+
+  if (!value || editing) {
+    return (
+      <>
+        <CodeInput
+          ariaLabel={`Confirmation number of ${name}`}
+          initial={editing ? value ?? "" : ""}
+          autoFocus={editing}
+          onDone={(text) => {
+            if (editing) finishEdit(text);
+            else if (text) onCommit(text).catch(() => {});
+          }}
+        />
+        {pending !== null && (
+          <ConfirmDialog
+            title={pending ? "Replace the confirmation number?" : "Remove the confirmation number?"}
+            confirmLabel={pending ? "Replace" : "Remove"}
+            onCancel={() => {
+              setPending(null);
+              setEditing(false);
+            }}
+            onConfirm={() => {
+              const text = pending;
+              setPending(null);
+              setEditing(false);
+              onCommit(text).catch(() => {});
+            }}
+          >
+            {name}: <b style={{ fontFamily: "var(--mono)" }}>{value}</b>
+            {recordedAt && showInfo ? <> (entered {fmtRecordedAt(recordedAt)})</> : null}
+            {pending ? (
+              <>
+                {" "}will be replaced with <b style={{ fontFamily: "var(--mono)" }}>{pending}</b>
+                {pending.toUpperCase() === "AD" || pending.toUpperCase() === "X" ? null : ", stamped with the current date and time"}.
+              </>
+            ) : (
+              " will be removed."
+            )}
+          </ConfirmDialog>
+        )}
+      </>
+    );
+  }
+
+  // The ⓘ only appears when there's an entry time to show.
+  const info = showInfo && recordedAt ? `Entered ${fmtRecordedAt(recordedAt)}` : null;
+  return (
+    // Value on the left, icons pushed to the right edge so they line up down
+    // the column: ✎ always last, ⓘ (when there is one) just before it.
+    <span style={{ display: "flex", alignItems: "center", gap: 6, padding: "4px 6px", whiteSpace: "nowrap", width: "100%" }}>
+      <span data-testid={`confirmation-of-${name}`} style={{ fontFamily: "var(--mono)", fontSize: 12, marginRight: "auto" }}>
+        {value}
+      </span>
+      {info && (
+        <span role="img" aria-label={info} title={info} style={{ color: "var(--muted)", fontSize: 13, cursor: "help", lineHeight: 1 }}>
+          ⓘ
+        </span>
+      )}
+      <button
+        type="button"
+        aria-label={`Edit confirmation number of ${name}`}
+        title="Edit"
+        onClick={() => setEditing(true)}
+        style={{ border: "none", background: "none", color: "var(--muted)", padding: 0, fontSize: 13, lineHeight: 1, cursor: "pointer" }}
+      >
+        ✎
+      </button>
+    </span>
+  );
+}
+
+function CodeInput({ ariaLabel, initial, autoFocus, onDone }: { ariaLabel: string; initial: string; autoFocus: boolean; onDone: (text: string | null) => void }) {
+  const [draft, setDraft] = useState(initial);
+  // Set once the field has been answered (Enter, paste, Escape), so the blur
+  // that follows doesn't answer it a second time; typing again re-arms it.
+  const done = useRef(false);
+  const finish = (text: string | null) => {
+    if (done.current) return;
+    done.current = true;
+    onDone(text);
+  };
+  return (
+    <input
+      aria-label={ariaLabel}
+      className="inline-editable"
+      autoFocus={autoFocus}
+      value={draft}
+      placeholder="—"
+      title="Paste the confirmation number — or type AD if it's automatic, X if someone else completes it"
+      onChange={(e) => {
+        done.current = false;
+        setDraft(e.target.value);
+      }}
+      onPaste={(e) => {
+        const text = e.clipboardData.getData("text").trim();
+        if (!text) return;
+        e.preventDefault();
+        setDraft(text);
+        finish(text);
+      }}
+      onBlur={() => finish(draft.trim())}
+      onKeyDown={(e) => {
+        if (e.key === "Enter") finish(draft.trim());
+        if (e.key === "Escape") {
+          setDraft(initial);
+          finish(null);
+        }
+      }}
+      style={{ ...cellInput, fontFamily: "var(--mono)", fontSize: 12, background: "var(--panel)", boxShadow: "inset 0 0 0 1px var(--border)" }}
+    />
+  );
+}
+
+// A date edited in place: commits on blur or Enter, not on every change —
+// typing a date by keyboard passes through other valid dates on the way
+// ("1" en route to "12" is January), and each of those would be saved.
+export function DateCell({
+  value,
+  onCommit,
+  ariaLabel,
+  min,
+  max,
+  disabled,
+  title,
+  style,
+}: {
+  value: string;
+  onCommit: (value: string) => Promise<void>;
+  ariaLabel: string;
+  min?: string;
+  max?: string;
+  disabled?: boolean;
+  title?: string;
+  style?: CSSProperties;
+}) {
+  const [draft, setDraft] = useState<string | null>(null);
+  async function commit() {
+    if (draft === null) return;
+    if (isValidIsoDate(draft) && draft !== value) await onCommit(draft).catch(() => {});
+    setDraft(null);
+  }
+  return (
+    <input
+      type="date"
+      aria-label={ariaLabel}
+      value={draft ?? value}
+      min={min}
+      max={max}
+      disabled={disabled}
+      title={title}
+      onChange={(e) => setDraft(e.target.value)}
+      onBlur={commit}
+      onKeyDown={(e) => {
+        if (e.key === "Enter") (e.target as HTMLInputElement).blur();
+        if (e.key === "Escape") setDraft(null);
+      }}
+      style={{ border: "1px solid var(--border)", borderRadius: 8, padding: "3px 4px", fontSize: 12, color: "var(--text)", background: "var(--panel)", ...style }}
     />
   );
 }

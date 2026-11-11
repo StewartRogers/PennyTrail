@@ -30,7 +30,7 @@ export async function PATCH(request: Request, ctx: RouteContext<"/api/cashflow/e
   const confirmationCode = readOptionalText(body.confirmationCode, 100);
   const notes = readOptionalText(body.notes, 1000);
   if (kind === null) return NextResponse.json({ error: "kind must be bill or deposit" }, { status: 400 });
-  if (status === null) return NextResponse.json({ error: "status must be planned, scheduled, posted, or skipped" }, { status: 400 });
+  if (status === null) return NextResponse.json({ error: "status must be projected, actual, or skipped" }, { status: 400 });
   if (settlement === null) return NextResponse.json({ error: "settlement must be manual, auto, or external" }, { status: 400 });
   if (expectedAmount === null || !actualAmount.ok) return NextResponse.json({ error: "Amounts must be non-negative numbers" }, { status: 400 });
   if (postingDate === null || !postedDate.ok || !scheduledDate.ok) return NextResponse.json({ error: "Dates must be valid (yyyy-mm-dd)" }, { status: 400 });
@@ -52,8 +52,15 @@ export async function PATCH(request: Request, ctx: RouteContext<"/api/cashflow/e
     if (scheduledDate.value === null) delete entry.scheduledDate;
     else if (scheduledDate.value !== undefined) entry.scheduledDate = scheduledDate.value;
     if (body.confirmationCode !== undefined) {
-      if (confirmationCode.value) entry.confirmationCode = confirmationCode.value;
-      else delete entry.confirmationCode;
+      if (confirmationCode.value) {
+        // A new or different number is stamped with when it was entered;
+        // re-sending the same one keeps the original time.
+        if (confirmationCode.value !== entry.confirmationCode) entry.confirmationRecordedAt = new Date().toISOString();
+        entry.confirmationCode = confirmationCode.value;
+      } else {
+        delete entry.confirmationCode;
+        delete entry.confirmationRecordedAt;
+      }
     }
     if (body.notes !== undefined) {
       if (notes.value) entry.notes = notes.value;
@@ -65,14 +72,23 @@ export async function PATCH(request: Request, ctx: RouteContext<"/api/cashflow/e
     }
     if (postedDate.value === null) delete entry.postedDate;
     else if (postedDate.value !== undefined) entry.postedDate = postedDate.value;
+    // A date set by hand is the date: the nominal due date follows it, so the
+    // row stops showing "due <old date>". (dueDate is display only — the
+    // occurrence key that stops duplicates is stored separately.)
+    const typedDate = postedDate.value ?? postingDate;
+    if (typedDate) entry.dueDate = typedDate;
 
+    // The status only ever changes here, when the user sets it. A Projected
+    // entry can still carry a bank line's date (matched, not yet confirmed),
+    // so editing it otherwise leaves that date and link alone.
     if (status) entry.status = status;
-    if (entry.status === "posted") {
-      // Done means posted: a posted entry always has the date it posted.
+    if (entry.status === "actual") {
+      // An Actual entry always has the date it posted.
       entry.postedDate = entry.postedDate ?? entry.postingDate;
-    } else {
+    } else if (status) {
+      // Set back to Projected or Skipped by hand: it hasn't happened, so it
+      // has no posted date and no bank line settling it.
       delete entry.postedDate;
-      // No longer settled, so no longer settled by a bank line either.
       if (entry.bankTransactionId) {
         detachEntries(state, new Set([entry.id]));
         delete entry.bankTransactionId;

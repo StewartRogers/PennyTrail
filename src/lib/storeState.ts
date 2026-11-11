@@ -32,6 +32,14 @@ export function normalizeState(parsed: unknown, source: string): AppState {
   for (const key of Object.keys(defaults) as (keyof AppState)[]) {
     if (!Array.isArray(state[key])) state[key] = defaults[key];
   }
+  // Entry statuses were renamed (and "scheduled" folded into Projected, which
+  // it always counted as); a store written before that still has the old
+  // values, and is rewritten with the new ones on its next save.
+  for (const entry of state.cashFlowEntries as { status?: unknown }[]) {
+    if (entry === null || typeof entry !== "object") continue;
+    if (entry.status === "planned" || entry.status === "scheduled") entry.status = "projected";
+    else if (entry.status === "posted") entry.status = "actual";
+  }
   return state as unknown as AppState;
 }
 

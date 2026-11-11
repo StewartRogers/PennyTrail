@@ -49,7 +49,7 @@ export async function POST(request: Request) {
   return NextResponse.json(result);
 }
 
-// Unlinks one bank line from its entry; the entry goes back to outstanding.
+// Unlinks one bank line from its entry; the entry keeps its status.
 export async function DELETE(request: Request) {
   const body = await readJsonObject(request);
   if (typeof body.bankTransactionId !== "string") return NextResponse.json({ error: "bankTransactionId is required" }, { status: 400 });

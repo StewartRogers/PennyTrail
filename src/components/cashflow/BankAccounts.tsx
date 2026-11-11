@@ -4,6 +4,7 @@ import { useState } from "react";
 import type { AppState, BankAccount } from "@/lib/types";
 import { addBankAccount, deleteBankAccount, updateBankAccount } from "@/lib/api";
 import { canadianBankHolidays } from "@/lib/businessDays";
+import { bcYearMonth } from "@/lib/bcTime";
 import { isValidIsoDate } from "@/lib/request";
 import { useToast } from "../ToastContext";
 import { PageTitle, PrimaryButton, inputStyle, labelStyle } from "../ui";
@@ -73,8 +74,8 @@ function AccountCard({ account: a, run }: { account: BankAccount; run: (action: 
   const [showHolidays, setShowHolidays] = useState(false);
   const [newHoliday, setNewHoliday] = useState("");
   const years = [...new Set(a.bankHolidays.map((d) => Number(d.slice(0, 4))))].sort();
-  const nextYear = (years[years.length - 1] ?? new Date().getFullYear()) + 1;
-  const thisYear = new Date().getFullYear();
+  const thisYear = bcYearMonth().year;
+  const nextYear = (years[years.length - 1] ?? thisYear) + 1;
   const upcoming = a.bankHolidays.filter((d) => d.startsWith(String(thisYear)) || d.startsWith(String(thisYear + 1)));
 
   return (
@@ -94,7 +95,7 @@ function AccountCard({ account: a, run }: { account: BankAccount; run: (action: 
           <MoneyCell ariaLabel="Daily spend rate" value={a.dailySpendRate} onCommit={(v) => run(() => updateBankAccount(a.id, { dailySpendRate: v ?? 0 }), "Saved — months you start from now use it")} style={{ border: "1px solid var(--border)", width: 110, textAlign: "left" }} />
         </label>
         <label>
-          <div style={labelStyle}>Warn when the low point is below</div>
+          <div style={labelStyle} title="This Month warns when the projected balance ahead dips below this (below zero when left empty)">Warn when the low point is below</div>
           <MoneyCell
             ariaLabel="Low-balance warning"
             value={a.lowBalanceThreshold}

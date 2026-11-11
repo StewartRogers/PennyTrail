@@ -5,6 +5,7 @@ import type { AppState, Transaction } from "@/lib/types";
 import { fmtCurrency, fmtCurrencyWhole, monthKey, monthLabel, quarterKey, toISODate, yearKey } from "@/lib/format";
 import { categoryIdForTransaction, netAmountForTransaction, parentIdForTransaction } from "@/lib/vendors";
 import { trailingPeriodKeys } from "@/lib/aggregate";
+import { bcYearMonth } from "@/lib/bcTime";
 import { Card as PanelCard, SectionTitle, ColorDot, SegmentedControl, inputStyle } from "./ui";
 import type { DrillDown } from "./DrillDownModal";
 
@@ -27,13 +28,14 @@ const RANGE_LABELS: Record<RangePreset, string> = {
 };
 
 function rangeCutoff(preset: RangePreset): string | null {
-  const now = new Date();
+  // The current year and month on BC's calendar, not the device's.
+  const { year, month } = bcYearMonth();
   if (preset === "all") return null;
   if (preset === "ytd") {
-    return `${now.getFullYear()}-01-01`;
+    return `${year}-01-01`;
   }
   const months = preset === "6mo" ? 6 : 12;
-  const cutoff = new Date(now.getFullYear(), now.getMonth() - months + 1, 1);
+  const cutoff = new Date(year, month - 1 - months + 1, 1);
   // toISOString() would convert this local date to UTC first, pulling the
   // cutoff back a day for anyone east of UTC.
   return toISODate(cutoff);

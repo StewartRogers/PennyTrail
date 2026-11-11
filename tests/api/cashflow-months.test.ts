@@ -114,20 +114,68 @@ describe("PATCH /api/cashflow/months/[id]", () => {
     expect((await patchMonth(oct.month.id, { removePeriodId: p3.id })).status).toBe(400);
   });
 
-  it("sets every entry back to Planned with resetStatuses, as setting each by hand would", async () => {
+  it("keeps the final checkpoint on the last day of the month", async () => {
+    const account = await accountWithRent();
+    const { body: oct } = await startMonth({ accountId: account.id, month: "2026-10", openingBalance: 1 });
+    const [, , p3] = sortPeriods(oct.month.periods);
+    expect((await patchMonth(oct.month.id, { periods: [{ id: p3.id, endDate: "2026-10-27" }] })).status).toBe(400);
+    expect((await patchMonth(oct.month.id, { removePeriodId: p3.id })).status).toBe(400);
+    const stored = (await readStore()).cashFlowMonths[0];
+    expect(sortPeriods(stored.periods).map((p) => p.endDate)).toEqual(["2026-10-02", "2026-10-09", "2026-10-31"]);
+  });
+
+  it("leaves an imported month's early final checkpoint alone until it is changed", async () => {
+    const account = await accountWithRent();
+    const { body: oct } = await startMonth({ accountId: account.id, month: "2026-10", openingBalance: 1 });
+    const [p1, , p3] = sortPeriods(oct.month.periods);
+    // As a spreadsheet import can leave it: the month's last checkpoint on the 30th.
+    const { updateState } = await import("@/lib/store");
+    await updateState((state) => {
+      state.cashFlowMonths[0].periods.find((p) => p.id === p3.id)!.endDate = "2026-10-30";
+      return {};
+    });
+    expect((await patchMonth(oct.month.id, { periods: [{ id: p1.id, actualBalance: 5 }] })).status).toBe(200);
+    expect((await patchMonth(oct.month.id, { periods: [{ id: p3.id, endDate: "2026-10-29" }] })).status).toBe(400);
+    expect((await patchMonth(oct.month.id, { periods: [{ id: p3.id, endDate: "2026-10-31" }] })).status).toBe(200);
+  });
+
+  it("closes the month when its final checkpoint is recorded, and reopens it when that is cleared", async () => {
+    const account = await accountWithRent();
+    const { body: oct } = await startMonth({ accountId: account.id, month: "2026-10", openingBalance: 10000 });
+    const [p1, , p3] = sortPeriods(oct.month.periods);
+    expect((await patchMonth(oct.month.id, { closed: true })).status).toBe(400); // still a projection
+    expect((await patchMonth(oct.month.id, { periods: [{ id: p1.id, actualBalance: 9000 }] })).body.month.closed).toBe(false);
+    expect((await patchMonth(oct.month.id, { periods: [{ id: p3.id, actualBalance: 4000 }] })).body.month.closed).toBe(true);
+    expect((await patchMonth(oct.month.id, { closed: false })).body.month.closed).toBe(false); // reopened by hand
+    expect((await patchMonth(oct.month.id, { periods: [{ id: p1.id, actualBalance: 9100 }] })).body.month.closed).toBe(false); // stays reopened
+    expect((await patchMonth(oct.month.id, { closed: true })).body.month.closed).toBe(true);
+    expect((await patchMonth(oct.month.id, { periods: [{ id: p3.id, actualBalance: null }] })).body.month.closed).toBe(false);
+  });
+
+  it("a month started again brings the next month's carried opening with it", async () => {
+    const account = await accountWithRent();
+    const { body: oct } = await startMonth({ accountId: account.id, month: "2026-10", openingBalance: 10000 });
+    const { body: nov } = await startMonth({ accountId: account.id, month: "2026-11" });
+    await deleteMonth(oct.month.id, { confirm: true });
+    await startMonth({ accountId: account.id, month: "2026-10", openingBalance: 20000 });
+    // 20,000 − 31 × 50 − 1,500 − 2,661
+    expect((await readStore()).cashFlowMonths.find((m) => m.id === nov.month.id)!.openingBalance).toBe(14289);
+  });
+
+  it("sets every entry back to Projected with resetStatuses, as setting each by hand would", async () => {
     const account = await accountWithRent();
     const { body: oct } = await startMonth({ accountId: account.id, month: "2026-10", openingBalance: 10000 });
     const [first, second] = oct.entries;
-    await patchEntry(first.id, { status: "posted", postedDate: "2026-10-02", actualAmount: 1490, confirmationCode: "123" });
+    await patchEntry(first.id, { status: "actual", postedDate: "2026-10-02", actualAmount: 1490, confirmationCode: "123" });
     await patchEntry(second.id, { status: "skipped" });
     const { status, body } = await patchMonth(oct.month.id, { resetStatuses: true });
     expect(status).toBe(200);
     expect(body.reset).toBe(2);
     const entries = (await readStore()).cashFlowEntries;
     const a = entries.find((e) => e.id === first.id)!;
-    expect(a).toMatchObject({ status: "planned", postingDate: first.postingDate, actualAmount: 1490, confirmationCode: "123", monthId: oct.month.id });
+    expect(a).toMatchObject({ status: "projected", postingDate: first.postingDate, actualAmount: 1490, confirmationCode: "123", monthId: oct.month.id });
     expect(a.postedDate).toBeUndefined();
-    expect(entries.find((e) => e.id === second.id)!.status).toBe("planned");
+    expect(entries.find((e) => e.id === second.id)!.status).toBe("projected");
     expect((await patchMonth(oct.month.id, { resetStatuses: true })).body.reset).toBe(0);
   });
 
@@ -187,7 +235,7 @@ describe("month math through the API", () => {
     const { body: oct } = await startMonth({ accountId: account.id, month: "2026-10", openingBalance: 10000 });
     const before = summarizeMonth(oct.month, oct.entries).projectedClose;
     const rent = oct.entries[0];
-    await patchEntry(rent.id, { status: "posted", actualAmount: 1500.01 });
+    await patchEntry(rent.id, { status: "actual", actualAmount: 1500.01 });
     const state = await readStore();
     const after = summarizeMonth(state.cashFlowMonths[0], state.cashFlowEntries).projectedClose;
     expect(Math.round((before - after) * 100)).toBe(1);

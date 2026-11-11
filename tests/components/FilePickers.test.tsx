@@ -1,19 +1,15 @@
 /** @vitest-environment jsdom */
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import { BankImport } from "@/components/cashflow/BankImport";
-import { CashFlowHistory } from "@/components/cashflow/CashFlowHistory";
 import { ToastProvider } from "@/components/ToastContext";
-import { readXlsx } from "@/lib/xlsx";
 import type { BankAccount } from "@/lib/types";
 import { makeAppState } from "../helpers/fixtures";
 
 vi.mock("@/lib/api", () => ({
   importBankTransactions: vi.fn(),
   updateBankAccount: vi.fn(),
-  importCashFlowHistory: vi.fn(),
 }));
-vi.mock("@/lib/xlsx", () => ({ readXlsx: vi.fn().mockResolvedValue([]) }));
 
 const account: BankAccount = { id: "acct", name: "Chequing", institution: "Bank", last4: "0000", color: "red", dailySpendRate: 50, bankHolidays: [] };
 const appState = makeAppState({ bankAccounts: [account] });
@@ -58,47 +54,5 @@ describe("Bank CSV file picker", () => {
     expect(screen.getByRole("button", { name: "Choose a different file" })).toBeInTheDocument();
     // Cleared, so choosing the same file again still fires a change.
     expect(input.value).toBe("");
-  });
-});
-
-describe("Workbook file picker on History", () => {
-  function renderHistory() {
-    render(
-      <ToastProvider>
-        <CashFlowHistory appState={appState} onReload={vi.fn()} accountId="acct" onOpenMonth={vi.fn()} />
-      </ToastProvider>
-    );
-  }
-
-  it("shows a button and 'No file chosen' instead of the browser's control", () => {
-    renderHistory();
-    expect(screen.getByRole("button", { name: "Choose .xlsx file" })).toBeInTheDocument();
-    expect(screen.getByText("No file chosen")).toBeInTheDocument();
-    expect(screen.getByLabelText("Workbook file")).not.toBeVisible();
-  });
-
-  it("shows the file's name while reading and after", async () => {
-    let finish: (v: []) => void = () => {};
-    vi.mocked(readXlsx).mockReturnValueOnce(new Promise((resolve) => (finish = resolve)));
-    renderHistory();
-    const input = pick("Workbook file", new File(["x"], "budget.xlsx"));
-    expect(await screen.findByText("Reading budget.xlsx…")).toBeInTheDocument();
-    // Nothing is loaded until the read finishes.
-    expect(screen.getByRole("button", { name: "Choose .xlsx file" })).toBeDisabled();
-    finish([]);
-    await waitFor(() => expect(screen.getByText("budget.xlsx", { selector: "span" })).toBeInTheDocument());
-    expect(screen.getByRole("button", { name: "Choose a different file" })).toBeEnabled();
-    expect(input.value).toBe("");
-  });
-
-  it("keeps naming the loaded workbook when the next one fails to read", async () => {
-    renderHistory();
-    pick("Workbook file", new File(["x"], "good.xlsx"));
-    expect(await screen.findByText("good.xlsx", { selector: "span" })).toBeInTheDocument();
-    vi.mocked(readXlsx).mockRejectedValueOnce(new Error("Not a workbook"));
-    pick("Workbook file", new File(["x"], "broken.xlsx"));
-    await waitFor(() => expect(screen.queryByText(/Reading/)).not.toBeInTheDocument());
-    expect(screen.getByText("good.xlsx", { selector: "span" })).toBeInTheDocument();
-    expect(screen.queryByText("broken.xlsx", { selector: "span" })).not.toBeInTheDocument();
   });
 });

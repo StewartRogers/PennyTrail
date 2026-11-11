@@ -17,7 +17,7 @@ function txn(overrides: Partial<BankTransaction>): BankTransaction {
 }
 
 function entry(overrides: Partial<CashFlowEntry>): CashFlowEntry {
-  return { id: id("e"), monthId: "m_oct", itemId: null, name: "Entry", kind: "bill", dueDate: "2026-10-01", postingDate: "2026-10-01", expectedAmount: 100, status: "planned", ...overrides };
+  return { id: id("e"), monthId: "m_oct", itemId: null, name: "Entry", kind: "bill", dueDate: "2026-10-01", postingDate: "2026-10-01", expectedAmount: 100, status: "projected", ...overrides };
 }
 
 function item(overrides: Partial<CashFlowItem>): CashFlowItem {
@@ -71,7 +71,7 @@ describe("suggestMatches", () => {
     const e = entry({ name: "Fortis", expectedAmount: 40, postingDate: "2026-10-26" });
     expect(suggestMatches({ bankTransactions: [txn({ rawDescription: "FORTIS", amount: 40, date: "2026-11-01" })], entries: [e], items: [], months: [m] })).toEqual([]);
     expect(suggestMatches({ bankTransactions: [txn({ rawDescription: "FORTIS", amount: 40, date: "2026-10-26", direction: "in" })], entries: [e], items: [], months: [m] })).toEqual([]);
-    const posted = { ...e, status: "posted" as const };
+    const posted = { ...e, status: "actual" as const };
     expect(suggestMatches({ bankTransactions: [txn({ rawDescription: "FORTIS", amount: 40, date: "2026-10-26" })], entries: [posted], items: [], months: [m] })).toEqual([]);
     const linked = txn({ rawDescription: "FORTIS", amount: 40, date: "2026-10-26", entryId: "elsewhere" });
     expect(suggestMatches({ bankTransactions: [linked], entries: [e], items: [], months: [m] })).toEqual([]);
@@ -151,6 +151,15 @@ describe("suggestCheckpointBalances", () => {
     const lines = [txn({ date: "2026-10-01", amount: 300, direction: "out" }), txn({ date: "2026-10-05", amount: 1, direction: "out" })];
     const s = suggestCheckpointBalances({ month: oct, months: [sep, oct], bankTransactions: lines });
     expect(s[0]).toEqual({ periodId: p1.id, balance: 700, basedOn: { date: "2026-09-30", balance: 1000 }, lines: 1 });
+  });
+
+  it("offers nothing when the imported lines start well after the recorded balance", () => {
+    const sep = month({ id: "m_sep", month: "2026-09" });
+    sortPeriods(sep.periods)[2].actualBalance = 1000;
+    const oct = month();
+    // Nothing imported for Oct 1–19, so Sep 30's balance plus these lines isn't Oct 31's.
+    const lines = [txn({ date: "2026-10-20", amount: 300, direction: "out" }), txn({ date: "2026-10-31", amount: 1, direction: "out" })];
+    expect(suggestCheckpointBalances({ month: oct, months: [sep, oct], bankTransactions: lines })).toEqual([]);
   });
 
   it("offers nothing without a recorded checkpoint to start from, or without lines", () => {

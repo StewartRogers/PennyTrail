@@ -47,7 +47,7 @@ function entry(overrides: Partial<CashFlowEntry>): CashFlowEntry {
     dueDate: overrides.postingDate ?? "2026-10-01",
     postingDate: "2026-10-01",
     expectedAmount: 0,
-    status: "planned",
+    status: "projected",
     ...overrides,
   };
 }
@@ -150,28 +150,27 @@ describe("entry helpers", () => {
   });
 
   it("only flags manual planned bills as needing scheduling", () => {
-    expect(needsScheduling({ kind: "bill", status: "planned", settlement: "manual" })).toBe(true);
-    expect(needsScheduling({ kind: "bill", status: "planned" })).toBe(true); // manual by default
-    expect(needsScheduling({ kind: "bill", status: "planned", settlement: "auto" })).toBe(false);
-    expect(needsScheduling({ kind: "bill", status: "planned", settlement: "external" })).toBe(false);
-    expect(needsScheduling({ kind: "bill", status: "scheduled", settlement: "manual" })).toBe(false);
-    expect(needsScheduling({ kind: "deposit", status: "planned", settlement: "manual" })).toBe(false);
+    expect(needsScheduling({ kind: "bill", status: "projected", settlement: "manual" })).toBe(true);
+    expect(needsScheduling({ kind: "bill", status: "projected" })).toBe(true); // manual by default
+    expect(needsScheduling({ kind: "bill", status: "projected", settlement: "auto" })).toBe(false);
+    expect(needsScheduling({ kind: "bill", status: "projected", settlement: "external" })).toBe(false);
+    expect(needsScheduling({ kind: "bill", status: "projected", settlement: "manual", scheduledDate: "2026-10-05" })).toBe(false);
+    expect(needsScheduling({ kind: "deposit", status: "projected", settlement: "manual" })).toBe(false);
     // A confirmation number means the payment is set up, whatever the status says.
-    expect(needsScheduling({ kind: "bill", status: "planned", settlement: "manual", confirmationCode: "136266" })).toBe(false);
+    expect(needsScheduling({ kind: "bill", status: "projected", settlement: "manual", confirmationCode: "136266" })).toBe(false);
   });
 
   it("treats a confirmation number on a planned entry as a payment set up", () => {
-    expect(isPaymentSetUp({ status: "scheduled" })).toBe(true);
-    expect(isPaymentSetUp({ status: "planned", confirmationCode: "136266" })).toBe(true);
-    expect(isPaymentSetUp({ status: "planned" })).toBe(false);
-    expect(isPaymentSetUp({ status: "posted", confirmationCode: "136266" })).toBe(false);
+    expect(isPaymentSetUp({ status: "projected", scheduledDate: "2026-10-05" })).toBe(true);
+    expect(isPaymentSetUp({ status: "projected", confirmationCode: "136266" })).toBe(true);
+    expect(isPaymentSetUp({ status: "projected" })).toBe(false);
+    expect(isPaymentSetUp({ status: "actual", confirmationCode: "136266" })).toBe(false);
   });
 
   it("calls an outstanding entry overdue once its date has passed, scheduled or not", () => {
-    expect(isOverdue({ status: "planned", postingDate: "2026-10-17" }, "2026-10-18")).toBe(true);
-    expect(isOverdue({ status: "scheduled", postingDate: "2026-10-17" }, "2026-10-18")).toBe(true);
-    expect(isOverdue({ status: "planned", postingDate: "2026-10-18" }, "2026-10-18")).toBe(false);
-    expect(isOverdue({ status: "posted", postingDate: "2026-10-01" }, "2026-10-18")).toBe(false);
+    expect(isOverdue({ status: "projected", postingDate: "2026-10-17" }, "2026-10-18")).toBe(true);
+    expect(isOverdue({ status: "projected", postingDate: "2026-10-18" }, "2026-10-18")).toBe(false);
+    expect(isOverdue({ status: "actual", postingDate: "2026-10-01" }, "2026-10-18")).toBe(false);
     expect(isOverdue({ status: "skipped", postingDate: "2026-10-01" }, "2026-10-18")).toBe(false);
   });
 });
@@ -187,11 +186,11 @@ describe("summarizeMonth", () => {
     const [p1] = sortPeriods(m.periods);
     p1.actualBalance = 11150.01;
     const entries = [
-      entry({ name: "Rent part 1", expectedAmount: 1500, postingDate: "2026-10-01", status: "posted", postedDate: "2026-10-01" }),
-      entry({ name: "SR pay", kind: "deposit", expectedAmount: 3000.5, postingDate: "2026-10-01", status: "posted" }),
-      entry({ name: "CIBC", expectedAmount: 200, actualAmount: 222.47, postingDate: "2026-10-01", status: "posted" }),
-      entry({ name: "Insurance", expectedAmount: 28.92, postingDate: "2026-10-09", status: "posted" }),
-      entry({ name: "Simplii", expectedAmount: 754.3, postingDate: "2026-10-09", status: "scheduled" }),
+      entry({ name: "Rent part 1", expectedAmount: 1500, postingDate: "2026-10-01", status: "actual", postedDate: "2026-10-01" }),
+      entry({ name: "SR pay", kind: "deposit", expectedAmount: 3000.5, postingDate: "2026-10-01", status: "actual" }),
+      entry({ name: "CIBC", expectedAmount: 200, actualAmount: 222.47, postingDate: "2026-10-01", status: "actual" }),
+      entry({ name: "Insurance", expectedAmount: 28.92, postingDate: "2026-10-09", status: "actual" }),
+      entry({ name: "Simplii", expectedAmount: 754.3, postingDate: "2026-10-09", confirmationCode: "104238" }),
       entry({ name: "BMO Porter", expectedAmount: 0, postingDate: "2026-10-09", status: "skipped" }),
       entry({ name: "SR pay", kind: "deposit", expectedAmount: 3000.5, postingDate: "2026-10-15" }),
       entry({ name: "Child Tax Benefit", kind: "deposit", expectedAmount: 502.35, postingDate: "2026-10-20", dateUncertain: true, settlement: "external" }),
@@ -294,7 +293,7 @@ describe("summarizeMonth", () => {
 
   it("counts an entry in the period of its posted date, not its expected one", () => {
     const m = month();
-    const late = entry({ name: "Late", expectedAmount: 100, postingDate: "2026-10-09", postedDate: "2026-10-13", status: "posted" });
+    const late = entry({ name: "Late", expectedAmount: 100, postingDate: "2026-10-09", postedDate: "2026-10-13", status: "actual" });
     const s = summarizeMonth(m, [late]);
     expect(s.periods[1].rows).toHaveLength(0);
     expect(s.periods[2].rows.map((r) => r.entry.name)).toEqual(["Late"]);
@@ -338,6 +337,27 @@ describe("summarizeMonth", () => {
     expect(s.projectedClose).toBe(8450); // 10,000 − 31 days × 50
     expect(s.deposits).toBe(0);
     expect(s.bills).toBe(0);
+    expect(s.projectedEntries).toBe(0);
+    expect(s.impliedDailySpend).toBeNull();
+  });
+
+  it("reports each period's balance after Weekly Spend and what the rate alone gives", () => {
+    const m = month();
+    sortPeriods(m.periods)[1].spendOverride = 400;
+    const s = summarizeMonth(m, [entry({ expectedAmount: 10, postingDate: "2026-10-05" }), entry({ expectedAmount: 5, postingDate: "2026-10-06", status: "actual" })]);
+    // Oct 1–2: 2 days × 50. Oct 3–9: 7 days × 50 by rate, 400 by hand.
+    expect(s.periods.map((p) => [p.rateSpend, p.spend, p.afterSpend])).toEqual([
+      [100, 100, 9900],
+      [350, 400, 9500],
+      [1100, 1100, 8385],
+    ]);
+    expect(s.projectedEntries).toBe(1);
+  });
+
+  it("averages implied spend over the recorded days", () => {
+    const m = month();
+    sortPeriods(m.periods)[0].actualBalance = 9870; // projected 9,900 → 130 spent over 2 days
+    expect(summarizeMonth(m, []).impliedDailySpend).toBe(65);
   });
 
   it("handles negative balances", () => {
@@ -417,6 +437,22 @@ describe("generateMonthEntries", () => {
     expect(again.filter((e) => e.itemId === "rent1" && e.dueDate === "2026-10-31")).toHaveLength(0);
   });
 
+  it("doesn't add a second copy beside an entry keyed on another date", () => {
+    // As the spreadsheet import leaves it: the Child Tax Benefit recorded on
+    // the 19th, keyed on that date rather than the nominal 20th.
+    const imported = entry({ monthId: "m_2026-11", itemId: "ctb", occurrenceKey: "ctb:2026-11-19", kind: "deposit", postingDate: "2026-11-19" });
+    const nov = generate("2026-11", [imported]);
+    expect(nov.some((e) => e.itemId === "ctb")).toBe(false);
+    expect(nov.filter((e) => e.itemId === "sr")).toHaveLength(2); // other items are unaffected
+  });
+
+  it("an out-of-step entry stands in for the nearest occurrence only", () => {
+    // One Kerri Pay row recorded on the 27th: the month-end pay is covered, the 15th's is still added.
+    const imported = entry({ monthId: "m_2026-11", itemId: "ka", occurrenceKey: "ka:2026-11-27", kind: "deposit", postingDate: "2026-11-27" });
+    const nov = generate("2026-11", [imported]);
+    expect(nov.filter((e) => e.itemId === "ka").map((e) => e.dueDate)).toEqual(["2026-11-15"]);
+  });
+
   it("skips inactive items and other accounts' items", () => {
     const oct = generate("2026-10");
     expect(oct.some((e) => e.itemId === "old" || e.itemId === "other")).toBe(false);
@@ -427,7 +463,7 @@ describe("generateMonthEntries", () => {
     const ctbEntry = oct.find((e) => e.itemId === "ctb")!;
     expect(ctbEntry.settlement).toBe("external");
     expect(ctbEntry.dateUncertain).toBe(true);
-    expect(ctbEntry.status).toBe("planned");
+    expect(ctbEntry.status).toBe("projected");
     expect(ctbEntry.occurrenceKey).toBe("ctb:2026-10-20");
     expect(oct.find((e) => e.itemId === "rent1")!.dateUncertain).toBeUndefined();
   });
@@ -447,9 +483,9 @@ describe("expectedAmountFor", () => {
 
   it("uses the most recent posted amount for a variable item", () => {
     const history = [
-      entry({ itemId: "hydro", status: "posted", expectedAmount: 150, actualAmount: 124.32, postingDate: "2026-08-23" }),
-      entry({ itemId: "hydro", status: "posted", expectedAmount: 150, actualAmount: 188.77, postingDate: "2026-10-23" }),
-      entry({ itemId: "hydro", status: "planned", expectedAmount: 999, postingDate: "2026-12-23" }),
+      entry({ itemId: "hydro", status: "actual", expectedAmount: 150, actualAmount: 124.32, postingDate: "2026-08-23" }),
+      entry({ itemId: "hydro", status: "actual", expectedAmount: 150, actualAmount: 188.77, postingDate: "2026-10-23" }),
+      entry({ itemId: "hydro", status: "projected", expectedAmount: 999, postingDate: "2026-12-23" }),
       entry({ itemId: "hydro", status: "skipped", expectedAmount: 0, postingDate: "2026-11-23" }),
     ];
     expect(expectedAmountFor(hydro, history)).toBe(188.77);
@@ -457,7 +493,7 @@ describe("expectedAmountFor", () => {
 
   it("always uses the default for a fixed item", () => {
     const rent = item({ id: "rent", amountMode: "fixed", defaultAmount: 1500 });
-    expect(expectedAmountFor(rent, [entry({ itemId: "rent", status: "posted", actualAmount: 1400 })])).toBe(1500);
+    expect(expectedAmountFor(rent, [entry({ itemId: "rent", status: "actual", actualAmount: 1400 })])).toBe(1500);
   });
 });
 

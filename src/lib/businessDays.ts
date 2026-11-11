@@ -5,6 +5,7 @@
 
 import type { RollRule } from "./types";
 import { addDays, dayOfWeek, daysInMonth, isoFromParts } from "./dates";
+import { bcYearMonth } from "./bcTime";
 
 export function isWeekend(iso: string): boolean {
   const dow = dayOfWeek(iso);
@@ -95,8 +96,9 @@ export function defaultBankHolidays(fromYear: number, toYear: number): string[] 
 // A new account's list: back to 2020 (the spreadsheet history starts in
 // January 2024) through two years ahead. Editable per account, and extended
 // from the Accounts screen when a later year comes up.
+// Runs on the server, so the year is BC's rather than the server's (UTC on Vercel).
 export function initialBankHolidays(now: Date = new Date()): string[] {
-  return defaultBankHolidays(2020, now.getFullYear() + 2);
+  return defaultBankHolidays(2020, bcYearMonth(now).year + 2);
 }
 
 export function isBusinessDay(iso: string, holidays: ReadonlySet<string>): boolean {

@@ -41,7 +41,7 @@ export function readSettlement(value: unknown): Settlement | null {
 }
 
 export function readStatus(value: unknown): EntryStatus | null {
-  return value === "planned" || value === "scheduled" || value === "posted" || value === "skipped" ? value : null;
+  return value === "projected" || value === "actual" || value === "skipped" ? value : null;
 }
 
 function readDay(value: unknown): DayOfMonth | null {

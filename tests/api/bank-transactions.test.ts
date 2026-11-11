@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { setupScratchDataDir } from "../helpers/testStore";
-import { addEntry, confirmMatches, createAccount, deleteBankTxns, importBank, patchBankTxn, readStore, startMonth, unlinkMatch } from "../helpers/cashflowApi";
+import { addEntry, confirmMatches, createAccount, deleteBankTxns, importBank, patchBankTxn, patchEntry, readStore, startMonth, unlinkMatch } from "../helpers/cashflowApi";
 import { summarizeMonth } from "@/lib/cashflow";
 
 setupScratchDataDir();
@@ -118,13 +118,13 @@ describe("matching bank lines to entries", () => {
     return { account, oct, pay, line: imported.transactions[0] };
   }
 
-  it("posts the entry with the line's date and amount, and moves the balance", async () => {
+  it("gives the entry the line's date and amount, leaving its status alone, and moves the balance", async () => {
     const { oct, pay, line } = await octoberWithPay();
     const { status } = await confirmMatches({ matches: [{ bankTransactionId: line.id, entryId: pay.id }] });
     expect(status).toBe(200);
     const state = await readStore();
     const entry = state.cashFlowEntries.find((e) => e.id === pay.id)!;
-    expect(entry).toMatchObject({ status: "posted", postedDate: "2026-10-01", actualAmount: 3000, bankTransactionId: line.id });
+    expect(entry).toMatchObject({ status: "projected", postedDate: "2026-10-01", actualAmount: 3000, bankTransactionId: line.id });
     expect(state.bankTransactions[0].entryId).toBe(pay.id);
     // 1,000 − 1,550 spend + 3,000
     expect(summarizeMonth(state.cashFlowMonths.find((m) => m.id === oct.month.id)!, state.cashFlowEntries).projectedClose).toBe(2450);
@@ -134,7 +134,7 @@ describe("matching bank lines to entries", () => {
     const { pay, line } = await octoberWithPay();
     const res = await confirmMatches({ matches: [{ bankTransactionId: line.id, entryId: pay.id }, { bankTransactionId: "gone", entryId: "gone" }] });
     expect(res.status).toBe(409);
-    expect((await readStore()).cashFlowEntries.find((e) => e.id === pay.id)!.status).toBe("planned");
+    expect((await readStore()).cashFlowEntries.find((e) => e.id === pay.id)!.status).toBe("projected");
   });
 
   it("refuses a line and entry going opposite ways, or a repeat", async () => {
@@ -152,13 +152,23 @@ describe("matching bank lines to entries", () => {
     expect((await confirmMatches({ matches: [{ bankTransactionId: line.id, entryId: pay.id }, { bankTransactionId: line.id, entryId: "other" }] })).status).toBe(400);
   });
 
-  it("unlinks, returning the entry to outstanding", async () => {
+  it("keeps a matched entry's bank date and link through other edits", async () => {
     const { pay, line } = await octoberWithPay();
     await confirmMatches({ matches: [{ bankTransactionId: line.id, entryId: pay.id }] });
+    await patchEntry(pay.id, { notes: "checked" });
+    expect((await readStore()).cashFlowEntries.find((e) => e.id === pay.id)).toMatchObject({ status: "projected", postedDate: "2026-10-01", bankTransactionId: line.id });
+    await patchEntry(pay.id, { status: "actual" });
+    expect((await readStore()).cashFlowEntries.find((e) => e.id === pay.id)).toMatchObject({ status: "actual", postedDate: "2026-10-01", actualAmount: 3000 });
+  });
+
+  it("unlinks without touching the status", async () => {
+    const { pay, line } = await octoberWithPay();
+    await confirmMatches({ matches: [{ bankTransactionId: line.id, entryId: pay.id }] });
+    await patchEntry(pay.id, { status: "actual" });
     expect((await unlinkMatch({ bankTransactionId: line.id })).status).toBe(200);
     const state = await readStore();
     const entry = state.cashFlowEntries.find((e) => e.id === pay.id)!;
-    expect(entry.status).toBe("planned");
+    expect(entry.status).toBe("actual");
     expect(entry.postedDate).toBeUndefined();
     expect(entry.actualAmount).toBeUndefined();
     expect(entry.bankTransactionId).toBeUndefined();
@@ -166,12 +176,13 @@ describe("matching bank lines to entries", () => {
     expect((await unlinkMatch({ bankTransactionId: line.id })).status).toBe(400);
   });
 
-  it("deleting a matched bank line keeps the entry posted but drops the link", async () => {
+  it("deleting a matched bank line keeps the entry's status but drops the link", async () => {
     const { pay, line } = await octoberWithPay();
     await confirmMatches({ matches: [{ bankTransactionId: line.id, entryId: pay.id }] });
+    await patchEntry(pay.id, { status: "actual" });
     await deleteBankTxns({ ids: [line.id] });
     const entry = (await readStore()).cashFlowEntries.find((e) => e.id === pay.id)!;
-    expect(entry.status).toBe("posted");
+    expect(entry.status).toBe("actual");
     expect(entry.bankTransactionId).toBeUndefined();
   });
 

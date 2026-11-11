@@ -3,8 +3,8 @@ import { updateState } from "@/lib/store";
 import { uid } from "@/lib/id";
 import { MAX_NAME_LENGTH, readJsonObject } from "@/lib/request";
 import { readIsoDate, readMoney } from "@/lib/cashflowRequest";
-import { generateMonthEntries } from "@/lib/cashflow";
-import { addMonths, monthKeyOf } from "@/lib/dates";
+import { generateMonthEntries, sortPeriods } from "@/lib/cashflow";
+import { addMonths, monthEnd, monthKeyOf } from "@/lib/dates";
 import { detachEntries, refreshOpeningOf, refreshOpeningsFrom, resetMonthStatuses } from "@/lib/cashflowState";
 import type { CashFlowPeriod } from "@/lib/types";
 
@@ -82,7 +82,9 @@ export async function PATCH(request: Request, ctx: RouteContext<"/api/cashflow/m
       month.openingSource = "carried";
     }
     if (rate !== undefined) month.dailySpendRate = rate;
-    if (typeof body.closed === "boolean") month.closed = body.closed;
+    const finalBefore = sortPeriods(month.periods).at(-1);
+    const lastDateBefore = finalBefore?.endDate;
+    const wasRecorded = finalBefore?.actualBalance !== undefined;
 
     for (const patch of patches) {
       const period = month.periods.find((p) => p.id === patch.id);
@@ -108,6 +110,22 @@ export async function PATCH(request: Request, ctx: RouteContext<"/api/cashflow/m
     const dates = month.periods.map((p) => p.endDate);
     if (dates.some((d) => monthKeyOf(d) !== month.month)) return { error: "outside_month" as const };
     if (new Set(dates).size !== dates.length) return { error: "duplicate_checkpoint" as const };
+    // The last checkpoint closes the month, so it sits on the last day: days
+    // after it would get no Weekly Spend, and entries dated after it would
+    // count ahead of its recorded balance. A month imported with an earlier
+    // one keeps it until its checkpoints are changed.
+    const finalAfter = sortPeriods(month.periods).at(-1)!;
+    if (finalAfter.endDate !== monthEnd(month.month) && finalAfter.endDate !== lastDateBefore) return { error: "final_checkpoint" as const };
+
+    // A month is closed once its final checkpoint is recorded — every balance
+    // in it is then an actual — and open again if that is cleared. It can
+    // still be reopened or closed by hand, but not closed on a projection.
+    const isRecorded = finalAfter.actualBalance !== undefined;
+    if (isRecorded !== wasRecorded) month.closed = isRecorded;
+    if (typeof body.closed === "boolean") {
+      if (body.closed && !isRecorded) return { error: "not_recorded" as const };
+      month.closed = body.closed;
+    }
 
     let generated = 0;
     if (body.regenerate === true) {
@@ -139,6 +157,8 @@ export async function PATCH(request: Request, ctx: RouteContext<"/api/cashflow/m
       last_period: ["A month needs at least one checkpoint", 400],
       outside_month: ["Checkpoint dates must be inside the month", 400],
       duplicate_checkpoint: ["Two checkpoints can't share a date", 400],
+      final_checkpoint: ["The last checkpoint has to be the last day of the month", 400],
+      not_recorded: ["Record the end-of-month balance before closing the month", 400],
     };
     const [message, status] = messages[result.error as string];
     return NextResponse.json({ error: message }, { status });

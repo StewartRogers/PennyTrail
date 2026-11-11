@@ -23,8 +23,9 @@ export function findMonthFor(state: AppState, accountId: string, date: string): 
   return state.cashFlowMonths.find((m) => m.accountId === accountId && m.month === key);
 }
 
-// Marks an entry as settled by a bank line: posted on the line's date, for
-// the line's amount. Moves the entry to the line's month if it crosses one,
+// Links an entry to the bank line that settled it: the line's date and
+// amount become the entry's. The status is left alone — only the user
+// changes a status. Moves the entry to the line's month if it crosses one,
 // so the balance moves where the money actually moved.
 export function linkEntry(state: AppState, entry: CashFlowEntry, txn: BankTransaction): { error: string } | null {
   const month = state.cashFlowMonths.find((m) => m.id === entry.monthId);
@@ -32,7 +33,6 @@ export function linkEntry(state: AppState, entry: CashFlowEntry, txn: BankTransa
   if (month.accountId !== txn.accountId) return { error: "account_mismatch" };
   const target = findMonthFor(state, txn.accountId, txn.date);
   if (!target) return { error: "no_month" };
-  entry.status = "posted";
   entry.postedDate = txn.date;
   entry.actualAmount = txn.amount;
   entry.bankTransactionId = txn.id;
@@ -43,9 +43,9 @@ export function linkEntry(state: AppState, entry: CashFlowEntry, txn: BankTransa
   return null;
 }
 
-// Undoes linkEntry. The entry goes back to scheduled if it was scheduled
-// (it has a confirmation number or a scheduling date), otherwise planned,
-// and back into the month its expected posting date belongs to.
+// Undoes linkEntry: the bank's date and amount come off the entry and it
+// goes back into the month its expected posting date belongs to. The status
+// is left alone.
 export function unlinkEntry(state: AppState, txn: BankTransaction): void {
   const entry = state.cashFlowEntries.find((e) => e.id === txn.entryId);
   delete txn.entryId;
@@ -54,7 +54,6 @@ export function unlinkEntry(state: AppState, txn: BankTransaction): void {
   delete entry.bankTransactionId;
   delete entry.postedDate;
   delete entry.actualAmount;
-  entry.status = entry.confirmationCode || entry.scheduledDate ? "scheduled" : "planned";
   if (before) {
     const home = findMonthFor(state, before.accountId, entryDate(entry));
     if (home) entry.monthId = home.id;
@@ -63,17 +62,17 @@ export function unlinkEntry(state: AppState, txn: BankTransaction): void {
   }
 }
 
-// Puts every entry in a month back to Planned, the same way setting each
-// one to Planned would: a bank-matched entry is unmatched as unlinkEntry
-// does (losing the bank's amount and date), any other posted entry loses
-// its posted date, and each goes back to the month of its planned date
+// Puts every entry in a month back to Projected, the same way setting each
+// one to Projected would: a bank-matched entry is unmatched as unlinkEntry
+// does (losing the bank's amount and date), any other Actual entry loses
+// its posted date, and each goes back to the month of its projected date
 // when that month exists. Returns how many changed.
 export function resetMonthStatuses(state: AppState, month: CashFlowMonth): number {
   const txnById = new Map(state.bankTransactions.map((t) => [t.id, t]));
   const touched = new Set<CashFlowMonth>([month]);
   let changed = 0;
   for (const entry of state.cashFlowEntries) {
-    if (entry.monthId !== month.id || entry.status === "planned") continue;
+    if (entry.monthId !== month.id || entry.status === "projected") continue;
     const txn = entry.bankTransactionId ? txnById.get(entry.bankTransactionId) : undefined;
     if (txn) {
       unlinkEntry(state, txn); // also moves it home and refreshes openings
@@ -86,7 +85,7 @@ export function resetMonthStatuses(state: AppState, month: CashFlowMonth): numbe
         touched.add(home);
       }
     }
-    entry.status = "planned";
+    entry.status = "projected";
     changed++;
   }
   for (const m of touched) refreshOpeningsFrom(state, m);

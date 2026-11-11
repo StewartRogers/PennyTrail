@@ -14,12 +14,9 @@ const NAV_ITEMS: Record<Workspace, { screen: Screen; label: string }[]> = {
   ],
   cashflow: [
     { screen: "cf-month", label: "This Month" },
-    { screen: "cf-upcoming", label: "Upcoming" },
-    { screen: "cf-spending", label: "Spending" },
     { screen: "cf-bank", label: "Bank Transactions" },
     { screen: "cf-import", label: "Import Bank CSV" },
     { screen: "cf-items", label: "Recurring Items" },
-    { screen: "cf-history", label: "History" },
     { screen: "cf-accounts", label: "Accounts" },
   ],
 };

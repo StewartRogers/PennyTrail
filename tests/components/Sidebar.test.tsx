@@ -20,10 +20,12 @@ describe("Sidebar", () => {
 
   it("shows the Cash Flow screens and the shared ones", () => {
     renderSidebar("cashflow");
-    for (const label of ["This Month", "Upcoming", "Spending", "Bank Transactions", "Import Bank CSV", "Recurring Items", "History", "Accounts", "Categories", "Vendor Mappings"]) {
+    for (const label of ["This Month", "Bank Transactions", "Import Bank CSV", "Recurring Items", "Accounts", "Categories", "Vendor Mappings"]) {
       expect(screen.getByRole("button", { name: label })).toBeInTheDocument();
     }
-    expect(screen.queryByRole("button", { name: "Dashboard" })).not.toBeInTheDocument();
+    for (const removed of ["Upcoming", "Spending", "History", "Dashboard"]) {
+      expect(screen.queryByRole("button", { name: removed })).not.toBeInTheDocument();
+    }
   });
 
   it("switches workspace", () => {
@@ -34,14 +36,14 @@ describe("Sidebar", () => {
   });
 
   it("shows badges", () => {
-    renderSidebar("cashflow", { badges: { "cf-upcoming": 3, "cf-bank": 0 } });
-    expect(screen.getByRole("button", { name: /^Upcoming\s*3$/ })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Bank Transactions" })).toBeInTheDocument();
+    renderSidebar("cashflow", { badges: { "cf-bank": 3, "cf-items": 0 } });
+    expect(screen.getByRole("button", { name: /^Bank Transactions\s*3$/ })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Recurring Items" })).toBeInTheDocument();
   });
 
   it("navigates", () => {
     const props = renderSidebar("cashflow");
-    fireEvent.click(screen.getByRole("button", { name: "History" }));
-    expect(props.onNavigate).toHaveBeenCalledWith("cf-history");
+    fireEvent.click(screen.getByRole("button", { name: "Recurring Items" }));
+    expect(props.onNavigate).toHaveBeenCalledWith("cf-items");
   });
 });

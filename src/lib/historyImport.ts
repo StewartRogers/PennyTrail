@@ -15,7 +15,7 @@ import type {
   Settlement,
 } from "./types";
 import type { RollRule } from "./types";
-import { addDays, addMonths, daysBetween, daysInMonth, isoFromParts, monthEnd, monthIndex, monthKeyOf, monthStart } from "./dates";
+import { addDays, addMonths, daysBetween, daysInMonth, isoFromParts, monthIndex, monthKeyOf, monthStart } from "./dates";
 import { rollToBusinessDay } from "./businessDays";
 import { resolveDayOfMonth } from "./recurrence";
 import { parseAmount } from "./csv";
@@ -326,19 +326,16 @@ export function parseBudgetSheet(sheetName: string, rows: SheetCell[][], today: 
       if (!/^9+$/.test(code)) confirmationCode = code;
     }
 
+    // A row dated today or earlier has happened, so its amount is the actual
+    // one; anything later is still a projection. A past month therefore comes
+    // in all Actual, and the current one as a mix.
     const past = date <= today;
     let status: EntryStatus;
-    if (month >= monthKeyOf(today)) {
-      // The current month (and any later one) starts all Planned; its
-      // statuses are set by hand as things happen, not read off the sheet.
-      status = "planned";
-    } else if (amount === 0) {
+    if (amount === 0) {
       const cancelled = /cancel|not using/i.test(note);
-      status = past || settlement === "external" || cancelled ? "skipped" : "planned";
-    } else if (past) {
-      status = "posted";
+      status = past || settlement === "external" || cancelled ? "skipped" : "projected";
     } else {
-      status = confirmationCode || upper === "CONFIRMED" ? "scheduled" : "planned";
+      status = past ? "actual" : "projected";
     }
 
     const scheduled = note.startsWith("**") ? scheduledDateFromNote(note) : null;
@@ -542,8 +539,8 @@ export function seedItems(months: ParsedMonth[], holidays: ReadonlySet<string>):
       // own schedule, so its day is an estimate.
       dateUncertain: kind === "deposit" && settlement === "external",
       ...(owner ? { owner } : {}),
-      // Read off the amount and note, not the status: the current month's
-      // rows are all Planned.
+      // Read off the amount and note, not the status: a cancelled row later
+      // in the current month is still Projected.
       active: inNewest.length > 0 && !inNewest.every((e) => e.amount === 0 && /cancel|not using/i.test(e.notes ?? "")),
       monthsSeen,
     });
@@ -561,7 +558,7 @@ export function inferRecurrence(occurrences: ParsedEntry[], kind: CashFlowKind, 
   if (dates.length >= 4) {
     const gaps = dates.slice(1).map((d, i) => daysBetween(dates[i], d));
     if (gaps.filter((g) => g === 14).length / gaps.length >= 0.6) {
-      const posted = occurrences.filter((e) => e.status === "posted").map((e) => e.date).sort();
+      const posted = occurrences.filter((e) => e.status === "actual").map((e) => e.date).sort();
       return { type: "everyNWeeks", n: 2, anchorDate: posted[posted.length - 1] ?? dates[dates.length - 1] };
     }
   }
@@ -614,7 +611,7 @@ export function buildHistoryImport(args: {
   today: string;
   newId: (prefix: string) => string;
 }): HistoryImportPlan {
-  const { accountId, seeded, oneOffKeys, existingItems, existingMonths, today, newId } = args;
+  const { accountId, seeded, oneOffKeys, existingItems, existingMonths, newId } = args;
   const items: CashFlowItem[] = [];
   const itemIdByKey = new Map<string, string>();
   for (const item of existingItems) {
@@ -671,7 +668,8 @@ export function buildHistoryImport(args: {
       previous !== null &&
       previous.month.month === addMonths(parsed.month, -1) &&
       toCents(summarizeMonth(previous.month, previous.entries).closingBalance) === toCents(parsed.openingBalance);
-    const allRecorded = periods.every((p) => p.actualBalance !== undefined);
+    // Closed once the final checkpoint is recorded, as the month route does.
+    const finalRecorded = periods.length > 0 && periods.reduce((a, b) => (b.endDate > a.endDate ? b : a)).actualBalance !== undefined;
     const month: CashFlowMonth = {
       id: newId("cfm"),
       accountId,
@@ -680,7 +678,7 @@ export function buildHistoryImport(args: {
       openingSource: carried ? "carried" : "manual",
       dailySpendRate: parsed.dailySpendRate,
       periods,
-      closed: allRecorded && monthEnd(parsed.month) < today,
+      closed: finalRecorded,
       importedFrom: parsed.sheetName,
     };
     const monthEntries: CashFlowEntry[] = parsed.entries.map((e) => {
@@ -694,9 +692,9 @@ export function buildHistoryImport(args: {
         kind: e.kind,
         dueDate: e.date,
         postingDate: e.date,
-        ...(e.status === "posted" ? { postedDate: e.date } : {}),
+        ...(e.status === "actual" ? { postedDate: e.date } : {}),
         expectedAmount: e.amount,
-        ...(e.status === "posted" ? { actualAmount: e.amount } : {}),
+        ...(e.status === "actual" ? { actualAmount: e.amount } : {}),
         status: e.status,
         ...(e.settlement ? { settlement: e.settlement } : {}),
         ...(e.scheduledDate ? { scheduledDate: e.scheduledDate } : {}),

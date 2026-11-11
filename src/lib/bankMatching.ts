@@ -110,6 +110,11 @@ export function deriveBalance(args: {
   return fromCents(cents);
 }
 
+// How long after a recorded balance the first imported line may start and
+// still be taken to cover the time since: an account can sit quiet over a
+// long weekend, but not for weeks.
+const MAX_UNCOVERED_DAYS = 7;
+
 export interface CheckpointSuggestion {
   periodId: string;
   balance: number;
@@ -132,6 +137,7 @@ export function suggestCheckpointBalances(args: {
   const accountTxns = args.bankTransactions.filter((t) => t.accountId === month.accountId);
   if (accountTxns.length === 0) return [];
   const latestLine = accountTxns.reduce((max, t) => (t.date > max ? t.date : max), "");
+  const earliestLine = accountTxns.reduce((min, t) => (t.date < min ? t.date : min), latestLine);
   const recorded: { date: string; balance: number }[] = [];
   for (const m of args.months) {
     if (m.accountId !== month.accountId) continue;
@@ -144,6 +150,11 @@ export function suggestCheckpointBalances(args: {
     if (p.actualBalance !== undefined || p.endDate > latestLine) continue;
     const base = [...recorded].reverse().find((r) => r.date < p.endDate);
     if (!base) continue;
+    // The lines have to reach back to the recorded balance they build on. If
+    // the earliest imported line is well after it (the last checkpoint is
+    // September's and the first CSV starts in November), a stretch of
+    // activity is missing and the sum would be wrong.
+    if (daysBetween(base.date, earliestLine) > MAX_UNCOVERED_DAYS) continue;
     const lines = accountTxns.filter((t) => t.date > base.date && t.date <= p.endDate).length;
     if (lines === 0) continue;
     suggestions.push({

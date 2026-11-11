@@ -89,25 +89,26 @@ export function entryAmount(entry: Pick<CashFlowEntry, "actualAmount" | "expecte
   return entry.actualAmount ?? entry.expectedAmount;
 }
 
-// Not yet done: done means posted (see the plan's decisions).
+// Not yet confirmed: still a projection.
 export function isOutstanding(entry: Pick<CashFlowEntry, "status">): boolean {
-  return entry.status === "planned" || entry.status === "scheduled";
+  return entry.status === "projected";
 }
 
 export function isOverdue(entry: Pick<CashFlowEntry, "status" | "postedDate" | "postingDate">, today: string): boolean {
   return isOutstanding(entry) && entryDate(entry) < today;
 }
 
-// A payment is set up once it's Scheduled, or once it has a confirmation
-// number — typing one doesn't change the status, but the payment exists.
-export function isPaymentSetUp(entry: Pick<CashFlowEntry, "status" | "confirmationCode">): boolean {
-  return entry.status === "scheduled" || (entry.status === "planned" && !!entry.confirmationCode);
+// A payment is set up once it has a confirmation number or a scheduling
+// date — neither changes the status (it stays Projected), but the payment
+// exists.
+export function isPaymentSetUp(entry: Pick<CashFlowEntry, "status" | "confirmationCode" | "scheduledDate">): boolean {
+  return entry.status === "projected" && (!!entry.confirmationCode || !!entry.scheduledDate);
 }
 
 // Only manual bills ask to be scheduled — automatic (AD) and external (X)
 // items happen without you, and one with a payment set up is handled.
-export function needsScheduling(entry: Pick<CashFlowEntry, "status" | "kind" | "settlement" | "confirmationCode">): boolean {
-  return entry.kind === "bill" && entry.status === "planned" && (entry.settlement ?? "manual") === "manual" && !entry.confirmationCode;
+export function needsScheduling(entry: Pick<CashFlowEntry, "status" | "kind" | "settlement" | "confirmationCode" | "scheduledDate">): boolean {
+  return entry.kind === "bill" && entry.status === "projected" && (entry.settlement ?? "manual") === "manual" && !isPaymentSetUp(entry);
 }
 
 function signedCents(entry: CashFlowEntry): number {
@@ -134,6 +135,10 @@ export interface PeriodSummary {
   days: number;
   opening: number;
   spend: number;
+  // What the daily rate alone gives for this period (spend, unless overridden).
+  rateSpend: number;
+  // The balance once Weekly Spend is taken, before any entry.
+  afterSpend: number;
   deposits: number;
   bills: number;
   projected: number;
@@ -160,7 +165,16 @@ export interface MonthSummary {
   lowPoint: { balance: number; date: string } | null;
   // Sum over periods with a recorded checkpoint.
   impliedSpend: number;
+  // impliedSpend per day over the recorded periods; null when none is in.
+  impliedDailySpend: number | null;
   outstandingBills: { count: number; total: number };
+  // Entries still Projected — zero once every amount has been confirmed.
+  projectedEntries: number;
+}
+
+// Money going out across a set of entries, in dollars.
+export function billsTotal(entries: Pick<CashFlowEntry, "kind" | "actualAmount" | "expectedAmount">[]): number {
+  return fromCents(entries.reduce((sum, e) => (e.kind === "bill" ? sum + toCents(entryAmount(e)) : sum), 0));
 }
 
 function byEntryDate(a: CashFlowEntry, b: CashFlowEntry): number {
@@ -188,6 +202,7 @@ export function summarizeMonth(month: CashFlowMonth, monthEntries: CashFlowEntry
   let billsCents = 0;
   let spendCents = 0;
   let impliedCents = 0;
+  let recordedDays = 0;
   let low: { cents: number; date: string } | null = null;
   const consider = (cents: number, date: string) => {
     if (!low || cents < low.cents) low = { cents, date };
@@ -248,6 +263,8 @@ export function summarizeMonth(month: CashFlowMonth, monthEntries: CashFlowEntry
       days: span.days,
       opening: fromCents(periodOpening),
       spend: fromCents(spend),
+      rateSpend: fromCents(toCents(month.dailySpendRate) * span.days),
+      afterSpend: fromCents(periodOpening - spend),
       deposits: fromCents(deposits),
       bills: fromCents(bills),
       projected: fromCents(projected),
@@ -258,6 +275,7 @@ export function summarizeMonth(month: CashFlowMonth, monthEntries: CashFlowEntry
       const variance = actual - projected;
       const implied = spend - variance;
       impliedCents += implied;
+      recordedDays += span.days;
       summary.actual = fromCents(actual);
       summary.variance = fromCents(variance);
       summary.impliedSpend = fromCents(implied);
@@ -286,10 +304,9 @@ export function summarizeMonth(month: CashFlowMonth, monthEntries: CashFlowEntry
     closingIsActual,
     lowPoint: lowPoint ? { balance: fromCents(lowPoint.cents), date: lowPoint.date } : null,
     impliedSpend: fromCents(impliedCents),
-    outstandingBills: {
-      count: outstanding.length,
-      total: fromCents(outstanding.reduce((sum, e) => sum + toCents(entryAmount(e)), 0)),
-    },
+    impliedDailySpend: recordedDays > 0 ? Math.round(impliedCents / recordedDays) / 100 : null,
+    outstandingBills: { count: outstanding.length, total: billsTotal(outstanding) },
+    projectedEntries: monthEntries.filter(isOutstanding).length,
   };
 }
 
@@ -312,7 +329,7 @@ export function expectedAmountFor(item: CashFlowItem, entries: CashFlowEntry[]):
   if (item.amountMode === "fixed") return item.defaultAmount;
   let latest: CashFlowEntry | null = null;
   for (const e of entries) {
-    if (e.itemId !== item.id || e.status !== "posted") continue;
+    if (e.itemId !== item.id || e.status !== "actual") continue;
     if (!latest || entryDate(e) > entryDate(latest)) latest = e;
   }
   return latest ? entryAmount(latest) : item.defaultAmount;
@@ -323,6 +340,12 @@ export function expectedAmountFor(item: CashFlowItem, entries: CashFlowEntry[]):
 // rolling can carry one across the boundary (rent due Saturday Oct 31 posts
 // Monday Nov 2, so it's November's). The occurrence key then stops it being
 // generated again if it already exists anywhere.
+//
+// An entry of the item already in this month whose key matches none of the
+// item's occurrences — imported from the spreadsheet under the date it was
+// recorded on, or generated before the item's day was changed — stands in
+// for the missing occurrence nearest its date, so the same bill is never
+// added (and subtracted) twice.
 export function generateMonthEntries(args: {
   items: CashFlowItem[];
   month: CashFlowMonth;
@@ -339,11 +362,26 @@ export function generateMonthEntries(args: {
 
   for (const item of items) {
     if (!item.active || item.accountId !== month.accountId) continue;
-    for (const dueDate of occurrencesBetween(item.recurrence, windowStart, windowEnd)) {
+    const dueDates = occurrencesBetween(item.recurrence, windowStart, windowEnd);
+    const itemKeys = new Set(dueDates.map((d) => occurrenceKey(item.id, d)));
+    let missing: { dueDate: string; postingDate: string }[] = [];
+    for (const dueDate of dueDates) {
       const postingDate = rollToBusinessDay(dueDate, item.roll, holidays);
       if (monthKeyOf(postingDate) !== month.month) continue;
+      if (existingKeys.has(occurrenceKey(item.id, dueDate))) continue;
+      missing.push({ dueDate, postingDate });
+    }
+    for (const e of existing) {
+      if (missing.length === 0) break;
+      if (e.itemId !== item.id || e.monthId !== month.id || (e.occurrenceKey && itemKeys.has(e.occurrenceKey))) continue;
+      let nearest = missing[0];
+      for (const m of missing) {
+        if (Math.abs(daysBetween(m.postingDate, e.postingDate)) < Math.abs(daysBetween(nearest.postingDate, e.postingDate))) nearest = m;
+      }
+      missing = missing.filter((m) => m !== nearest);
+    }
+    for (const { dueDate, postingDate } of missing) {
       const key = occurrenceKey(item.id, dueDate);
-      if (existingKeys.has(key)) continue;
       existingKeys.add(key);
       created.push({
         id: newId(),
@@ -355,7 +393,7 @@ export function generateMonthEntries(args: {
         dueDate,
         postingDate,
         expectedAmount: expectedAmountFor(item, existing),
-        status: "planned",
+        status: "projected",
         settlement: item.settlement,
         ...(item.dateUncertain ? { dateUncertain: true } : {}),
       });

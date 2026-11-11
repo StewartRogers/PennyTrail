@@ -214,7 +214,11 @@ export interface CashFlowMonth {
   importedFrom?: string; // worksheet name, for months imported from the spreadsheet
 }
 
-export type EntryStatus = "planned" | "scheduled" | "posted" | "skipped";
+// Indicators for confirming an entry's real amount, nothing more: Projected
+// until the deposit or withdrawal is confirmed, then Actual; Skipped entries
+// don't count. Stores written before the rename ("planned", "scheduled",
+// "posted") are mapped on read — see normalizeState.
+export type EntryStatus = "projected" | "actual" | "skipped";
 
 export interface CashFlowEntry {
   id: string;
@@ -235,6 +239,10 @@ export interface CashFlowEntry {
   dateUncertain?: boolean;
   scheduledDate?: string;
   confirmationCode?: string;
+  // When confirmationCode was entered (ISO date-time, set by the server).
+  // Absent for numbers imported from the spreadsheet or entered before this
+  // was recorded.
+  confirmationRecordedAt?: string;
   bankTransactionId?: string;
   notes?: string;
 }

@@ -39,7 +39,7 @@ export async function POST(request: Request) {
       dueDate: postingDate,
       postingDate,
       expectedAmount,
-      status: "planned",
+      status: "projected",
       settlement,
       ...(notes.value ? { notes: notes.value } : {}),
     };

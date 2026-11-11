@@ -10,15 +10,17 @@ import {
   updateCashFlowEntry,
   updateCashFlowMonth,
 } from "@/lib/api";
-import { entriesForMonth, entryAmount, entryDate, isOverdue, summarizeMonth, type EntryRow, type PeriodSummary } from "@/lib/cashflow";
+import { entriesForMonth, entryAmount, entryDate, summarizeMonth, type EntryRow, type PeriodSummary } from "@/lib/cashflow";
 import { suggestCheckpointBalances, type CheckpointSuggestion } from "@/lib/bankMatching";
-import { addMonths } from "@/lib/dates";
+import { addMonths, monthEnd } from "@/lib/dates";
 import { isValidIsoDate } from "@/lib/request";
 import { fmtCurrency } from "@/lib/format";
 import { useToast } from "../ToastContext";
 import { PageTitle, PrimaryButton, inputStyle, labelStyle } from "../ui";
 import {
   ConfirmButton,
+  ConfirmationCell,
+  DateCell,
   MoneyCell,
   STATUS_LABELS,
   SmallButton,
@@ -32,7 +34,6 @@ import {
   statusColor,
   tdStyle,
   thStyle,
-  todayIso,
   weekdayDate,
 } from "./shared";
 
@@ -57,19 +58,16 @@ export function CashFlowMonthView({
   accountId,
   monthKey,
   onMonthKeyChange,
-  onGoHistory,
 }: {
   appState: AppState;
   onReload: () => Promise<void>;
   accountId: string;
   monthKey: string;
   onMonthKeyChange: (key: string) => void;
-  onGoHistory: () => void;
 }) {
   const run = useRun(onReload);
   const months = monthsForAccount(appState.cashFlowMonths, accountId);
   const month = months.find((m) => m.month === monthKey);
-  const today = todayIso();
 
   const pickerKeys = useMemo(() => {
     const keys = new Set(months.map((m) => m.month));
@@ -98,9 +96,9 @@ export function CashFlowMonthView({
       </div>
 
       {month ? (
-        <StartedMonth appState={appState} month={month} run={run} today={today} />
+        <StartedMonth appState={appState} month={month} run={run} />
       ) : (
-        <StartMonthPanel appState={appState} accountId={accountId} monthKey={monthKey} run={run} hasAnyMonth={months.length > 0} onGoHistory={onGoHistory} />
+        <StartMonthPanel appState={appState} accountId={accountId} monthKey={monthKey} run={run} />
       )}
     </div>
   );
@@ -111,15 +109,11 @@ function StartMonthPanel({
   accountId,
   monthKey,
   run,
-  hasAnyMonth,
-  onGoHistory,
 }: {
   appState: AppState;
   accountId: string;
   monthKey: string;
   run: Run;
-  hasAnyMonth: boolean;
-  onGoHistory: () => void;
 }) {
   const previous = appState.cashFlowMonths.find((m) => m.accountId === accountId && m.month === addMonths(monthKey, -1));
   const carried = previous ? summarizeMonth(previous, entriesForMonth(appState.cashFlowEntries, previous.id)).closingBalance : null;
@@ -143,15 +137,6 @@ function StartMonthPanel({
       <div style={{ fontSize: 13, color: "var(--muted)", marginBottom: 14 }}>
         Starting it adds {itemCount} recurring item{itemCount === 1 ? "" : "s"} on their business-day dates, with checkpoints on the first Friday, second Friday,
         and month end.
-        {!hasAnyMonth && (
-          <>
-            {" "}Have a spreadsheet history?{" "}
-            <button onClick={onGoHistory} style={{ border: "none", background: "none", color: "var(--accent)", padding: 0, fontSize: 13, textDecoration: "underline" }}>
-              Import it from History
-            </button>
-            .
-          </>
-        )}
       </div>
       {carried !== null ? (
         <>
@@ -185,7 +170,7 @@ function StartMonthPanel({
   );
 }
 
-function StartedMonth({ appState, month, run, today }: { appState: AppState; month: CashFlowMonth; run: Run; today: string }) {
+function StartedMonth({ appState, month, run }: { appState: AppState; month: CashFlowMonth; run: Run }) {
   const entries = entriesForMonth(appState.cashFlowEntries, month.id);
   const summary = summarizeMonth(month, entries);
   const suggestions = new Map(
@@ -193,7 +178,11 @@ function StartedMonth({ appState, month, run, today }: { appState: AppState; mon
   );
   const previous = appState.cashFlowMonths.find((m) => m.accountId === month.accountId && m.month === addMonths(month.month, -1));
   const [newCheckpoint, setNewCheckpoint] = useState("");
-  const notPlanned = entries.filter((e) => e.status !== "planned").length;
+  // Shown only when the projection ahead dips under the account's warning
+  // level (zero — overdrawn — when none is set).
+  const lowPoint = summary.lowPoint;
+  const lowThreshold = appState.bankAccounts.find((a) => a.id === month.accountId)?.lowBalanceThreshold ?? 0;
+  const notProjected = entries.filter((e) => e.status !== "projected").length;
   const settingLabel = { fontSize: 12.5, color: "var(--muted)" };
   const settingInput = { border: "1px solid var(--border)", background: "var(--panel)", width: 120, fontWeight: 600 };
 
@@ -241,6 +230,13 @@ function StartedMonth({ appState, month, run, today }: { appState: AppState; mon
         </span>
       </div>
 
+      {lowPoint && lowPoint.balance < lowThreshold && (
+        <div role="alert" style={{ fontSize: 13, color: "var(--attention)", marginBottom: 12 }}>
+          Lowest balance ahead: <b style={{ fontFamily: "var(--mono)" }}>{fmtCurrency(lowPoint.balance)}</b> on {weekdayDate(lowPoint.date)}
+          {lowThreshold !== 0 && <> — below your {fmtCurrency(lowThreshold)} warning level</>}
+        </div>
+      )}
+
       {summary.periods.map((p) => (
         <PeriodBlock
           key={p.period.id}
@@ -250,7 +246,6 @@ function StartedMonth({ appState, month, run, today }: { appState: AppState; mon
           canRemove={summary.periods.length > 1}
           suggestion={suggestions.get(p.period.id)}
           run={run}
-          today={today}
         />
       ))}
 
@@ -258,12 +253,12 @@ function StartedMonth({ appState, month, run, today }: { appState: AppState; mon
         <SmallButton onClick={() => run(() => updateCashFlowMonth(month.id, { regenerate: true }), "Checked recurring items").catch(() => {})} title="Adds any recurring item created since this month was started; existing entries are left alone">
           Add new recurring items
         </SmallButton>
-        {notPlanned > 0 && (
+        {notProjected > 0 && (
           <ConfirmButton
-            label="Set all to Planned"
-            confirmLabel={`Set ${notPlanned} entr${notPlanned === 1 ? "y" : "ies"} back to Planned`}
-            title="Puts every entry in this month back to Planned, as if each were set to Planned by hand. Confirmation numbers are kept; bank-line matches are undone, and matched entries go back to their projected amount and date."
-            onConfirm={() => run(() => updateCashFlowMonth(month.id, { resetStatuses: true }), "Every entry is Planned").catch(() => {})}
+            label="Set all to Projected"
+            confirmLabel={`Set ${notProjected} entr${notProjected === 1 ? "y" : "ies"} back to Projected`}
+            title="Puts every entry in this month back to Projected, as if each were set to Projected by hand. Confirmation numbers are kept; bank-line matches are undone, and matched entries go back to their projected amount and date."
+            onConfirm={() => run(() => updateCashFlowMonth(month.id, { resetStatuses: true }), "Every entry is Projected").catch(() => {})}
           />
         )}
         <span style={{ display: "inline-flex", gap: 6, alignItems: "center" }}>
@@ -275,7 +270,11 @@ function StartedMonth({ appState, month, run, today }: { appState: AppState; mon
             Add checkpoint
           </SmallButton>
         </span>
-        <SmallButton onClick={() => run(() => updateCashFlowMonth(month.id, { closed: !month.closed }), month.closed ? "Month reopened" : "Month marked closed").catch(() => {})}>
+        <SmallButton
+          disabled={!month.closed && !summary.closingIsActual}
+          title={month.closed || summary.closingIsActual ? undefined : "Record the end-of-month balance first — the month closes itself when you do"}
+          onClick={() => run(() => updateCashFlowMonth(month.id, { closed: !month.closed }), month.closed ? "Month reopened" : "Month marked closed").catch(() => {})}
+        >
           {month.closed ? "Reopen month" : "Mark month closed"}
         </SmallButton>
         {month.closed && <Tag color="var(--positive)">Closed</Tag>}
@@ -295,7 +294,6 @@ function PeriodBlock({
   canRemove,
   suggestion,
   run,
-  today,
 }: {
   month: CashFlowMonth;
   period: PeriodSummary;
@@ -303,11 +301,12 @@ function PeriodBlock({
   canRemove: boolean;
   suggestion: CheckpointSuggestion | undefined;
   run: Run;
-  today: string;
 }) {
   const [adding, setAdding] = useState(false);
-  const spendFromRate = Math.round(month.dailySpendRate * 100 * p.days) / 100;
   const label = isLast ? "END OF MONTH" : "END OF WEEK";
+  // The last checkpoint closes the month on its last day; it only stays
+  // editable when an imported month has it somewhere else, so it can be moved there.
+  const fixedDate = isLast && p.end === monthEnd(month.month);
 
   return (
     <div style={{ background: "var(--panel)", border: "1px solid var(--border)", borderRadius: 12, marginBottom: 14, overflowX: "auto" }}>
@@ -324,8 +323,8 @@ function PeriodBlock({
           <tr>
             <th style={{ ...thStyle, paddingLeft: 16 }}>Item</th>
             <th style={thStyle}>Date</th>
-            <th style={{ ...thStyle, textAlign: "right" }}>Credit</th>
-            <th style={{ ...thStyle, textAlign: "right" }}>Debit</th>
+            <th style={{ ...thStyle, textAlign: "right" }} title="Money out: spending, bill payments, rent — subtracted from the balance">Withdrawals (−)</th>
+            <th style={{ ...thStyle, textAlign: "right" }} title="Money in — added to the balance">Deposits (+)</th>
             <th style={thStyle}>Status</th>
             <th style={thStyle}>Confirmation #</th>
             <th style={{ ...thStyle, textAlign: "right" }}>Balance</th>
@@ -334,72 +333,69 @@ function PeriodBlock({
         </thead>
         <tbody>
           <tr style={{ background: "oklch(0.97 0.004 260)" }}>
-            <td style={{ ...tdStyle, paddingLeft: 16, fontWeight: 600 }}>Weekly Spend</td>
+            <td style={{ ...tdStyle, paddingLeft: 16, fontWeight: 600, whiteSpace: "nowrap" }}>
+              Weekly Spend{" "}
+              <span
+                style={{ fontWeight: 400, color: "var(--muted)", fontSize: 12 }}
+                title={p.period.spendOverride === undefined ? undefined : "Clear the amount to use the daily rate"}
+              >
+                [{p.period.spendOverride === undefined ? `${fmtCurrency(month.dailySpendRate)}/day × ${p.days}` : "set by hand"}]
+              </span>
+            </td>
             <td style={{ ...tdStyle, color: "var(--muted)", fontSize: 12 }}>{shortDate(p.start)}</td>
             <td style={{ ...tdStyle, width: 120 }}>
               <MoneyCell
                 ariaLabel={`Weekly Spend for the period ending ${p.end}`}
                 value={p.period.spendOverride}
                 allowEmpty
-                placeholder={spendFromRate.toFixed(2)}
+                placeholder={p.rateSpend.toFixed(2)}
                 onCommit={(v) => run(() => updateCashFlowMonth(month.id, { periods: [{ id: p.period.id, spendOverride: v }] }))}
               />
             </td>
             <td style={tdStyle} />
-            <td colSpan={2} style={{ ...tdStyle, color: "var(--muted)", fontSize: 12 }}>
-              {p.period.spendOverride === undefined ? `${fmtCurrency(month.dailySpendRate)}/day × ${p.days}` : "Set by hand — clear it to use the daily rate"}
-            </td>
-            <td style={{ ...tdStyle, textAlign: "right", fontFamily: "var(--mono)" }}>{fmtCurrency(p.opening - p.spend)}</td>
+            <td colSpan={2} style={tdStyle} />
+            <td style={{ ...tdStyle, textAlign: "right", fontFamily: "var(--mono)" }}>{fmtCurrency(p.afterSpend)}</td>
             <td style={tdStyle} />
           </tr>
           {p.rows.map((row) => (
-            <EntryRowView key={row.entry.id} row={row} run={run} today={today} />
+            <EntryRowView key={row.entry.id} row={row} run={run} />
           ))}
           {adding && <AddEntryRow month={month} defaultDate={p.end} run={run} onDone={() => setAdding(false)} />}
-          <tr style={{ background: "oklch(0.97 0.004 260)" }}>
+          {/* Yellow while the balance is projected, green once the actual is typed over it. */}
+          <tr data-balance={p.actual === undefined ? "projected" : "actual"} style={{ background: p.actual === undefined ? "var(--row-projected)" : "var(--row-actual)" }}>
             <td style={{ ...tdStyle, paddingLeft: 16, fontWeight: 700, letterSpacing: "0.02em" }}>{label}</td>
-            <td style={tdStyle}>
-              <input
-                type="date"
-                aria-label={`Checkpoint date for ${label.toLowerCase()}`}
-                value={p.end}
-                min={`${month.month}-01`}
-                max={`${month.month}-31`}
-                onChange={(e) => {
-                  if (isValidIsoDate(e.target.value) && e.target.value !== p.end) {
-                    run(() => updateCashFlowMonth(month.id, { periods: [{ id: p.period.id, endDate: e.target.value }] })).catch(() => {});
-                  }
-                }}
-                style={{ ...inputStyle, padding: "3px 4px", fontSize: 12 }}
+            {/* Just the label and the balance. The middle stays empty unless
+                imported bank lines have a balance to offer. */}
+            <td colSpan={5} style={{ ...tdStyle, fontSize: 12, textAlign: "right" }}>
+              {p.actual === undefined && suggestion && (
+                <span>
+                  Bank lines put it at <span style={{ fontFamily: "var(--mono)", fontWeight: 600 }}>{fmtCurrency(suggestion.balance)}</span>{" "}
+                  <SmallButton
+                    title={`${fmtCurrency(suggestion.basedOn.balance)} on ${shortDate(suggestion.basedOn.date)} plus ${suggestion.lines} imported line${suggestion.lines === 1 ? "" : "s"} — check it against your banking app`}
+                    onClick={() => run(() => updateCashFlowMonth(month.id, { periods: [{ id: p.period.id, actualBalance: suggestion.balance }] }), "Checkpoint recorded").catch(() => {})}
+                  >
+                    Use it
+                  </SmallButton>
+                </span>
+              )}
+            </td>
+            {/* The balance is the field: the projection shows greyed until the
+                real balance is typed over it, which records the checkpoint. */}
+            <td style={{ ...tdStyle, width: 140 }}>
+              <MoneyCell
+                ariaLabel={`Actual balance at ${p.end}`}
+                value={p.actual}
+                allowEmpty
+                allowNegative
+                format={fmtCurrency}
+                placeholder={fmtCurrency(p.projected)}
+                title={p.actual === undefined ? "Projected — type the real balance to record it" : "Actual balance — clear it to go back to the projection"}
+                onCommit={(v) => run(() => updateCashFlowMonth(month.id, { periods: [{ id: p.period.id, actualBalance: v }] }), v === null ? "Checkpoint cleared" : "Checkpoint recorded")}
+                style={{ border: "1px solid var(--border)", background: "transparent", fontWeight: 600 }}
               />
             </td>
-            <td colSpan={4} style={{ ...tdStyle, fontSize: 12 }}>
-              <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
-                <MoneyCell
-                  ariaLabel={`Actual balance at ${p.end}`}
-                  value={p.actual}
-                  allowEmpty
-                  allowNegative
-                  placeholder="Actual"
-                  onCommit={(v) => run(() => updateCashFlowMonth(month.id, { periods: [{ id: p.period.id, actualBalance: v }] }), v === null ? "Checkpoint cleared" : "Checkpoint recorded")}
-                  style={{ border: "1px solid var(--border)", background: "var(--panel)", fontWeight: 600, width: 130 }}
-                />
-                {p.actual === undefined && suggestion && (
-                  <span>
-                    Bank lines put it at <span style={{ fontFamily: "var(--mono)", fontWeight: 600 }}>{fmtCurrency(suggestion.balance)}</span>{" "}
-                    <SmallButton
-                      title={`${fmtCurrency(suggestion.basedOn.balance)} on ${shortDate(suggestion.basedOn.date)} plus ${suggestion.lines} imported line${suggestion.lines === 1 ? "" : "s"} — check it against your banking app`}
-                      onClick={() => run(() => updateCashFlowMonth(month.id, { periods: [{ id: p.period.id, actualBalance: suggestion.balance }] }), "Checkpoint recorded").catch(() => {})}
-                    >
-                      Use it
-                    </SmallButton>
-                  </span>
-                )}
-              </div>
-            </td>
-            <td style={{ ...tdStyle, textAlign: "right", fontFamily: "var(--mono)", fontWeight: 600 }}>{fmtCurrency(p.actual ?? p.projected)}</td>
             <td style={{ ...tdStyle, whiteSpace: "nowrap" }}>
-              {canRemove && (
+              {canRemove && !fixedDate && (
                 <ConfirmButton label="×" confirmLabel="Remove checkpoint" title="Remove this checkpoint" onConfirm={() => run(() => updateCashFlowMonth(month.id, { removePeriodId: p.period.id }), "Checkpoint removed").catch(() => {})} />
               )}
             </td>
@@ -417,15 +413,29 @@ function PeriodBlock({
   );
 }
 
-function EntryRowView({ row, run, today }: { row: EntryRow; run: Run; today: string }) {
+function EntryRowView({ row, run }: { row: EntryRow; run: Run }) {
   const e = row.entry;
   const shownDate = entryDate(e);
-  const overdue = isOverdue(e, today);
   const update = (patch: Parameters<typeof updateCashFlowEntry>[1], success?: string) => run(() => updateCashFlowEntry(e.id, patch), success);
-  const muted = e.status === "posted" || e.status === "skipped";
+  const muted = e.status === "actual" || e.status === "skipped";
+  const settlement = e.settlement ?? "manual";
+  // Automatic (AD) and someone-else (X) items need no confirmation number,
+  // so the Confirmation # cell shows the code instead.
+  const shownCode = settlement === "auto" ? "AD" : settlement === "external" ? "X" : e.confirmationCode;
+  const missingConfirmation = settlement === "manual" && !e.confirmationCode && e.status !== "skipped";
+
+  function commitCode(text: string) {
+    const code = text.trim().toUpperCase();
+    if (code === "AD" || code === "AUTO") return update({ settlement: "auto", confirmationCode: "" });
+    if (code === "X") return update({ settlement: "external", confirmationCode: "" });
+    return update({ settlement: "manual", confirmationCode: text });
+  }
 
   return (
-    <tr style={{ opacity: e.status === "skipped" ? 0.55 : 1 }}>
+    <tr
+      data-missing-confirmation={missingConfirmation || undefined}
+      style={{ opacity: e.status === "skipped" ? 0.55 : 1, background: missingConfirmation ? "var(--row-missing)" : undefined }}
+    >
       <td style={{ ...tdStyle, paddingLeft: 10, minWidth: 210 }}>
         <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
           <TextCell ariaLabel={`Name of ${e.name}`} value={e.name} onCommit={(v) => (v ? update({ name: v }) : Promise.resolve())} style={{ fontWeight: muted ? 400 : 600, minWidth: 120 }} />
@@ -433,16 +443,11 @@ function EntryRowView({ row, run, today }: { row: EntryRow; run: Run; today: str
         </div>
       </td>
       <td style={{ ...tdStyle, whiteSpace: "nowrap" }}>
-        <input
-          type="date"
-          aria-label={`Date of ${e.name}`}
+        <DateCell
+          ariaLabel={`Date of ${e.name}`}
           value={shownDate}
-          onChange={(ev) => {
-            const v = ev.target.value;
-            if (!isValidIsoDate(v) || v === shownDate) return;
-            update(e.status === "posted" ? { postedDate: v } : { postingDate: v }).catch(() => {});
-          }}
-          style={{ ...inputStyle, padding: "3px 4px", fontSize: 12, color: overdue ? "var(--attention)" : "var(--text)" }}
+          // Edits whichever date is shown: the real one once there is one.
+          onCommit={(v) => update(e.postedDate !== undefined ? { postedDate: v } : { postingDate: v })}
         />
         {(e.dateUncertain || e.dueDate !== shownDate) && (
           <div style={{ fontSize: 10.5, color: "var(--muted)", paddingLeft: 4 }}>
@@ -450,7 +455,7 @@ function EntryRowView({ row, run, today }: { row: EntryRow; run: Run; today: str
           </div>
         )}
       </td>
-      {/* As in the spreadsheet: CREDIT is money out, DEBIT is money in. */}
+      {/* Withdrawals (money out) in the first column, deposits in the second. */}
       {e.kind === "bill" ? (
         <>
           <AmountCell entry={e} update={update} />
@@ -467,30 +472,20 @@ function EntryRowView({ row, run, today }: { row: EntryRow; run: Run; today: str
           aria-label={`Status of ${e.name}`}
           value={e.status}
           onChange={(ev) => update({ status: ev.target.value as EntryStatus }).catch(() => {})}
-          style={{ ...inputStyle, padding: "3px 4px", fontSize: 12, color: statusColor(e, today), fontWeight: 600 }}
+          style={{ ...inputStyle, padding: "3px 4px", fontSize: 12, color: statusColor(e), fontWeight: 600 }}
         >
           {(Object.keys(STATUS_LABELS) as EntryStatus[]).map((s) => (
             <option key={s} value={s}>
               {STATUS_LABELS[s]}
-              {s === "planned" && overdue ? " — overdue" : ""}
             </option>
           ))}
         </select>
       </td>
       <td style={{ ...tdStyle, width: 140 }}>
-        <TextCell
-          ariaLabel={`Confirmation number of ${e.name}`}
-          value={e.confirmationCode}
-          placeholder={e.kind === "bill" && (e.settlement ?? "manual") === "manual" ? "—" : ""}
-          onCommit={(v) => update({ confirmationCode: v })}
-          // A drawn box (the inline-editable class hides borders until hover)
-          // so the empty field is visible.
-          style={{ fontFamily: "var(--mono)", fontSize: 12, background: "var(--panel)", boxShadow: "inset 0 0 0 1px var(--border)" }}
-        />
+        <ConfirmationCell name={e.name} value={shownCode} recordedAt={e.confirmationRecordedAt} showInfo={settlement === "manual"} onCommit={commitCode} />
       </td>
       <td style={{ ...tdStyle, textAlign: "right", fontFamily: "var(--mono)", color: row.balanceAfter < 0 ? "var(--attention)" : "var(--text)" }}>
         {fmtCurrency(row.balanceAfter)}
-        {!row.counted && <div style={{ fontSize: 10.5, color: "var(--muted)" }}>not counted</div>}
       </td>
       <td style={{ ...tdStyle, whiteSpace: "nowrap" }}>
         <ConfirmButton label="×" confirmLabel="Delete" title={`Delete ${e.name}`} onConfirm={() => run(() => deleteCashFlowEntry(e.id), `Deleted ${e.name}`).catch(() => {})} />
@@ -499,7 +494,7 @@ function EntryRowView({ row, run, today }: { row: EntryRow; run: Run; today: str
   );
 }
 
-// The CREDIT or DEBIT cell: one amount, the projection until you type or
+// The withdrawal or deposit cell: one amount, the projection until you type or
 // paste the real figure over it. Saving it makes that the entry's only
 // amount, so a stale actual can't shadow it — except on a bank-matched
 // entry, where it corrects the actual and keeps the projection, which
@@ -543,8 +538,8 @@ function AddEntryRow({ month, defaultDate, run, onDone }: { month: CashFlowMonth
       <td colSpan={2} style={tdStyle}>
         <span style={{ display: "inline-flex", gap: 6 }}>
           <select aria-label="New item kind" value={kind} onChange={(e) => setKind(e.target.value as CashFlowEntry["kind"])} style={{ ...inputStyle, padding: "4px" }}>
-            <option value="bill">Credit (out)</option>
-            <option value="deposit">Debit (in)</option>
+            <option value="bill">Withdrawal (−)</option>
+            <option value="deposit">Deposit (+)</option>
           </select>
           <input aria-label="New item amount" value={amount} onChange={(e) => setAmount(e.target.value)} placeholder="0.00" inputMode="decimal" style={{ ...inputStyle, width: 100, fontFamily: "var(--mono)", textAlign: "right" }} />
         </span>

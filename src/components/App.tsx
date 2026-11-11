@@ -5,14 +5,11 @@ import type { AppState } from "@/lib/types";
 import { fetchState } from "@/lib/api";
 import { Sidebar } from "./Sidebar";
 import { CashFlowMonthView } from "./cashflow/CashFlowMonthView";
-import { CashFlowUpcoming } from "./cashflow/CashFlowUpcoming";
-import { CashFlowSpending } from "./cashflow/CashFlowSpending";
-import { CashFlowHistory } from "./cashflow/CashFlowHistory";
 import { RecurringItems } from "./cashflow/RecurringItems";
 import { BankAccounts } from "./cashflow/BankAccounts";
 import { BankImport } from "./cashflow/BankImport";
 import { BankTransactions } from "./cashflow/BankTransactions";
-import { AccountPicker, NoAccount, attentionCount, currentMonthKey, todayIso } from "./cashflow/shared";
+import { AccountPicker, NoAccount, currentMonthKey } from "./cashflow/shared";
 import { DrillDownModal, type DrillDown } from "./DrillDownModal";
 import { ToastProvider } from "./ToastContext";
 import { Dashboard } from "./Dashboard";
@@ -36,12 +33,9 @@ export type Screen =
   | "cards"
   | "templates"
   | "cf-month"
-  | "cf-upcoming"
-  | "cf-spending"
   | "cf-bank"
   | "cf-import"
   | "cf-items"
-  | "cf-history"
   | "cf-accounts";
 
 const HOME: Record<Workspace, Screen> = { cards: "dashboard", cashflow: "cf-month" };
@@ -95,11 +89,6 @@ function AppInner({ signOutEnabled }: { signOutEnabled: boolean }) {
     } catch {
       // Storage unavailable — the choice just isn't remembered.
     }
-  }, []);
-
-  const openCashFlowMonth = useCallback((monthKey: string) => {
-    setCfMonthKey(monthKey);
-    setScreen("cf-month");
   }, []);
 
   useEffect(() => {
@@ -174,7 +163,6 @@ function AppInner({ signOutEnabled }: { signOutEnabled: boolean }) {
   // The selected bank account, falling back to the first one (or none yet).
   const accountId = appState.bankAccounts.some((a) => a.id === cfAccountId) ? cfAccountId! : (appState.bankAccounts[0]?.id ?? null);
   const accountMonthIds = new Set(appState.cashFlowMonths.filter((m) => m.accountId === accountId).map((m) => m.id));
-  const accountEntries = appState.cashFlowEntries.filter((e) => accountMonthIds.has(e.monthId));
   const bankReview = appState.bankTransactions.filter((t) => t.accountId === accountId && t.needsReview).length;
   const footer =
     workspace === "cards"
@@ -189,7 +177,7 @@ function AppInner({ signOutEnabled }: { signOutEnabled: boolean }) {
         onWorkspaceChange={changeWorkspace}
         screen={screen}
         onNavigate={setScreen}
-        badges={{ transactions: pendingReviewCount, "cf-upcoming": attentionCount(accountEntries, todayIso()), "cf-bank": bankReview }}
+        badges={{ transactions: pendingReviewCount, "cf-bank": bankReview }}
         footer={footer}
         signOutEnabled={signOutEnabled}
       />
@@ -244,14 +232,11 @@ function AppInner({ signOutEnabled }: { signOutEnabled: boolean }) {
           </div>
         )}
         {accountId && screen === "cf-month" && (
-          <CashFlowMonthView appState={appState} onReload={reload} accountId={accountId} monthKey={cfMonthKey} onMonthKeyChange={setCfMonthKey} onGoHistory={() => setScreen("cf-history")} />
+          <CashFlowMonthView appState={appState} onReload={reload} accountId={accountId} monthKey={cfMonthKey} onMonthKeyChange={setCfMonthKey} />
         )}
-        {accountId && screen === "cf-upcoming" && <CashFlowUpcoming appState={appState} onReload={reload} accountId={accountId} onOpenMonth={openCashFlowMonth} />}
-        {accountId && screen === "cf-spending" && <CashFlowSpending appState={appState} accountId={accountId} monthKey={cfMonthKey} onMonthKeyChange={setCfMonthKey} />}
         {accountId && screen === "cf-bank" && <BankTransactions appState={appState} onReload={reload} accountId={accountId} />}
         {accountId && screen === "cf-import" && <BankImport appState={appState} onReload={reload} accountId={accountId} onGoTransactions={() => setScreen("cf-bank")} />}
         {accountId && screen === "cf-items" && <RecurringItems appState={appState} onReload={reload} accountId={accountId} />}
-        {accountId && screen === "cf-history" && <CashFlowHistory appState={appState} onReload={reload} accountId={accountId} onOpenMonth={openCashFlowMonth} />}
         {screen === "cf-accounts" && <BankAccounts appState={appState} onReload={reload} />}
       </div>
 

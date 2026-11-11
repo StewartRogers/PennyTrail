@@ -4,6 +4,7 @@ import { uid } from "@/lib/id";
 import { readJsonObject, readString } from "@/lib/request";
 import { readMoney, readMonthKey } from "@/lib/cashflowRequest";
 import { startMonth } from "@/lib/cashflow";
+import { refreshOpeningsFrom } from "@/lib/cashflowState";
 
 // Starts a month: default checkpoints, entries generated from the active
 // recurring items, and the opening carried from the previous month — or the
@@ -32,6 +33,9 @@ export async function POST(request: Request) {
     if ("error" in started) return { error: started.error };
     state.cashFlowMonths.push(started.month);
     state.cashFlowEntries.push(...started.entries);
+    // A month already there after this one (this one was deleted and started
+    // again, say) may carry its opening from this month's close.
+    refreshOpeningsFrom(state, started.month);
     return started;
   });
 

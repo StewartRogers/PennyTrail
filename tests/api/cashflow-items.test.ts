@@ -52,7 +52,7 @@ describe("PATCH /api/cashflow/items/[id]", () => {
     const { body: oct } = await startMonth({ accountId: account.id, month: "2026-10", openingBalance: 1000 });
     const [entry] = oct.entries;
     // Post October's, then start November.
-    await patchEntry(entry.id, { status: "posted", actualAmount: 27.65 });
+    await patchEntry(entry.id, { status: "actual", actualAmount: 27.65 });
     const { body: nov } = await startMonth({ accountId: account.id, month: "2026-11" });
 
     const plain = await patchItem(item.id, { defaultAmount: 28.92, name: "152 Home Insurance" });
