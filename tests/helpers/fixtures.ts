@@ -38,6 +38,11 @@ export function makeAppState(overrides: Partial<AppState> = {}): AppState {
     parentVendors: [],
     childVendors: [],
     transactions: [],
+    bankAccounts: [],
+    cashFlowItems: [],
+    cashFlowMonths: [],
+    cashFlowEntries: [],
+    bankTransactions: [],
     ...overrides,
   };
 }

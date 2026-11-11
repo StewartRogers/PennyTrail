@@ -1,4 +1,20 @@
-import type { AppState, Card, Category, ChildVendor, Network, ParentVendor, Template, Transaction } from "./types";
+import type {
+  AppState,
+  BankAccount,
+  BankImportMapping,
+  BankTransaction,
+  BankTxnType,
+  Card,
+  CashFlowEntry,
+  CashFlowItem,
+  CashFlowMonth,
+  Category,
+  ChildVendor,
+  Network,
+  ParentVendor,
+  Template,
+  Transaction,
+} from "./types";
 
 async function request<T>(url: string, options?: RequestInit): Promise<T> {
   const res = await fetch(url, {
@@ -148,4 +164,148 @@ export function moveChildVendor(id: string, parentId: string): Promise<ChildVend
 // too — see child-vendors/[id]/route.ts.
 export function deleteChildVendor(id: string): Promise<{ affectedCount: number; parentRemoved: boolean }> {
   return request(`/api/child-vendors/${id}`, { method: "DELETE" });
+}
+
+// ---------------------------------------------------------------------------
+// Cash Flow
+// ---------------------------------------------------------------------------
+
+export function addBankAccount(input: { name: string; institution?: string; last4?: string; dailySpendRate?: number; lowBalanceThreshold?: number }): Promise<BankAccount> {
+  return request("/api/bank-accounts", { method: "POST", body: JSON.stringify(input) });
+}
+
+export function updateBankAccount(
+  id: string,
+  patch: Partial<Pick<BankAccount, "name" | "institution" | "last4" | "dailySpendRate" | "bankHolidays">> & {
+    lowBalanceThreshold?: number | null;
+    importMapping?: BankImportMapping;
+  }
+): Promise<BankAccount> {
+  return request(`/api/bank-accounts/${id}`, { method: "PATCH", body: JSON.stringify(patch) });
+}
+
+export function deleteBankAccount(id: string): Promise<{ ok: true }> {
+  return request(`/api/bank-accounts/${id}`, { method: "DELETE" });
+}
+
+export type CashFlowItemInput = Omit<CashFlowItem, "id">;
+
+export function addCashFlowItem(input: CashFlowItemInput): Promise<CashFlowItem> {
+  return request("/api/cashflow/items", { method: "POST", body: JSON.stringify(input) });
+}
+
+export function updateCashFlowItem(
+  id: string,
+  patch: Partial<Omit<CashFlowItem, "id" | "accountId" | "owner" | "matchText" | "notes">> & {
+    owner?: string;
+    matchText?: string;
+    notes?: string;
+    applyToOutstanding?: boolean;
+  }
+): Promise<{ item: CashFlowItem; updatedEntries: number }> {
+  return request(`/api/cashflow/items/${id}`, { method: "PATCH", body: JSON.stringify(patch) });
+}
+
+export function deleteCashFlowItem(id: string): Promise<{ deleted: boolean; deactivated: boolean }> {
+  return request(`/api/cashflow/items/${id}`, { method: "DELETE" });
+}
+
+export function startCashFlowMonth(input: { accountId: string; month: string; openingBalance?: number }): Promise<{ month: CashFlowMonth; entries: CashFlowEntry[] }> {
+  return request("/api/cashflow/months", { method: "POST", body: JSON.stringify(input) });
+}
+
+export interface PeriodPatch {
+  id: string;
+  endDate?: string;
+  label?: string;
+  spendOverride?: number | null;
+  actualBalance?: number | null;
+}
+
+export function updateCashFlowMonth(
+  id: string,
+  patch: {
+    openingBalance?: number;
+    openingSource?: "carried";
+    dailySpendRate?: number;
+    closed?: boolean;
+    periods?: PeriodPatch[];
+    addPeriod?: { endDate: string };
+    removePeriodId?: string;
+    regenerate?: boolean;
+    resetStatuses?: boolean;
+  }
+): Promise<{ month: CashFlowMonth; generated: number; reset: number }> {
+  return request(`/api/cashflow/months/${id}`, { method: "PATCH", body: JSON.stringify(patch) });
+}
+
+// Removes the month and every entry in it, so the route insists on an
+// explicit confirmation in the body.
+export function deleteCashFlowMonth(id: string): Promise<{ deletedEntries: number }> {
+  return request(`/api/cashflow/months/${id}`, { method: "DELETE", body: JSON.stringify({ confirm: true }) });
+}
+
+export function addCashFlowEntry(input: { monthId: string; name: string; kind: "bill" | "deposit"; postingDate: string; expectedAmount: number; notes?: string }): Promise<CashFlowEntry> {
+  return request("/api/cashflow/entries", { method: "POST", body: JSON.stringify(input) });
+}
+
+export function updateCashFlowEntry(
+  id: string,
+  patch: Partial<Pick<CashFlowEntry, "name" | "kind" | "status" | "settlement" | "expectedAmount" | "postingDate" | "dateUncertain">> & {
+    actualAmount?: number | null;
+    postedDate?: string | null;
+    scheduledDate?: string | null;
+    confirmationCode?: string;
+    notes?: string;
+  }
+): Promise<CashFlowEntry> {
+  return request(`/api/cashflow/entries/${id}`, { method: "PATCH", body: JSON.stringify(patch) });
+}
+
+export function deleteCashFlowEntry(id: string): Promise<{ ok: true }> {
+  return request(`/api/cashflow/entries/${id}`, { method: "DELETE" });
+}
+
+export function importCashFlowHistory(input: {
+  accountId: string;
+  sheets: { name: string; rows: (string | number | boolean | null)[][] }[];
+  oneOffKeys: string[];
+  keyMap: Record<string, string>;
+  today: string;
+}): Promise<{ importedMonths: number; entries: number; items: number; skippedMonths: string[]; sheetErrors: { sheetName: string; error: string }[] }> {
+  return request("/api/cashflow/history-import", { method: "POST", body: JSON.stringify(input) });
+}
+
+export interface BankImportRow {
+  date: string;
+  rawDescription: string;
+  amount: number;
+  direction: "in" | "out";
+  forceImport?: boolean;
+}
+
+export function importBankTransactions(
+  accountId: string,
+  rows: BankImportRow[]
+): Promise<{ transactions: BankTransaction[]; counts: { total: number; review: number; skipped: number; duplicates: number }; duplicates: BankImportRow[] }> {
+  return request("/api/bank-transactions/import", { method: "POST", body: JSON.stringify({ accountId, rows }) });
+}
+
+export function updateBankTransaction(
+  id: string,
+  patch: { type?: BankTxnType; needsReview?: boolean; parentId?: string; newParentName?: string; category?: string }
+): Promise<BankTransaction> {
+  return request(`/api/bank-transactions/${id}`, { method: "PATCH", body: JSON.stringify(patch) });
+}
+
+export function deleteBankTransactions(ids: string[]): Promise<{ deletedCount: number }> {
+  return request("/api/bank-transactions", { method: "DELETE", body: JSON.stringify({ ids }) });
+}
+
+export function confirmBankMatches(matches: { bankTransactionId: string; entryId: string }[]): Promise<{ matched: number }> {
+  return request("/api/cashflow/matches", { method: "POST", body: JSON.stringify({ matches }) });
+}
+
+export function unlinkBankMatch(bankTransactionId: string): Promise<{ ok: true }> {
+  return request("/api/cashflow/matches", { method: "DELETE", body: JSON.stringify({ bankTransactionId }) });
 }

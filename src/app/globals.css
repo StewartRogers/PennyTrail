@@ -9,6 +9,10 @@
   --positive: oklch(0.58 0.11 155);
   --attention: oklch(0.58 0.13 35);
   --accent: oklch(0.55 0.15 250);
+  /* Cash Flow row shading */
+  --row-missing: oklch(0.95 0.035 25); /* light red: no confirmation number */
+  --row-projected: oklch(0.97 0.055 100); /* light yellow: balance is projected */
+  --row-actual: oklch(0.95 0.045 155); /* light green: balance is actual */
   --mono: var(--font-mono), monospace;
 }
 

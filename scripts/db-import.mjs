@@ -11,10 +11,13 @@ import { readFile } from "node:fs/promises";
 import pg from "pg";
 import { applySchema, directConnectionString } from "./db-migrate.mjs";
 
-const COLLECTIONS = ["cards", "categories", "templates", "parentVendors", "childVendors", "transactions"];
+const CASH_FLOW = ["bankAccounts", "cashFlowItems", "cashFlowMonths", "cashFlowEntries", "bankTransactions"];
+const COLLECTIONS = ["cards", "categories", "templates", "parentVendors", "childVendors", "transactions", ...CASH_FLOW];
 // Collections that only ever hold the user's own data (categories start with
-// defaults, so they don't count as "already has data").
-const USER_DATA = ["cards", "templates", "parentVendors", "childVendors", "transactions"];
+// defaults, so they don't count as "already has data"). The Cash Flow ones
+// belong here too — leaving them out would let an import replace a database
+// that holds only Cash Flow data without --force.
+const USER_DATA = ["cards", "templates", "parentVendors", "childVendors", "transactions", ...CASH_FLOW];
 
 function summarize(doc) {
   return COLLECTIONS.map((key) => `${Array.isArray(doc?.[key]) ? doc[key].length : 0} ${key}`).join(", ");

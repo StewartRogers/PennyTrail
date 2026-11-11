@@ -99,6 +99,33 @@ This block is written and re-added by `next dev` — verify at `node_modules/nex
   after the payment and cashback keywords, any other credit-side line is a
   `credit` (a merchant refund often carries nothing but the merchant name),
   so it offsets spend instead of vanishing as a `payment`.
+- **Cash Flow is a second side of the app, kept apart from the card side**
+  (`docs/cash-flow-plan.md`). Its collections — `bankAccounts`,
+  `cashFlowItems`, `cashFlowMonths`, `cashFlowEntries`, `bankTransactions` —
+  never feed the card screens, which aggregate `transactions` only; debit
+  purchases share just the vendor/category layer. All balance math lives in
+  pure modules (`src/lib/cashflow.ts`, `businessDays.ts`, `recurrence.ts`,
+  `bankMatching.ts`, `bankSpending.ts`) and runs in integer cents — keep it
+  there and keep it tested. Months are materialized: editing a recurring item
+  never rewrites past months. An entry counts in the month and period of its
+  posted date (else its business-day-adjusted posting date). A month whose
+  `openingSource` is `"carried"` follows the previous month's close, so any
+  route that changes a month must call `refreshOpeningsFrom` (see
+  `src/lib/cashflowState.ts`). Deleting a month needs `{ confirm: true }`;
+  wiping bank lines needs `{ all: true }`. Entry statuses are `projected`,
+  `actual`, and `skipped` — indicators of whether an amount has been
+  confirmed, nothing more; `normalizeState` maps the retired `planned` /
+  `scheduled` / `posted` on read, so don't reintroduce them. Only the user
+  changes a status: nothing (bank matching, unmatching, editing a date or
+  amount) may set one as a side effect.
+- **Dates and times are BC's, via `src/lib/bcTime.ts`.** BC's year-round
+  single time standard is Pacific Time, abbreviated PCT (UTC−7 year-round
+  since 8 March 2026); times are shown with "PCT". Don't use the
+  runtime's zone for "today" or for showing a time: on Vercel the server is
+  in UTC, and a device's or server's tz data may still fall back in
+  November. Use `bcTodayIso` / `bcYearMonth` / `fmtBcDateTime`; store
+  instants as UTC ISO strings. The final
+  checkpoint sits on the month's last day, and recording it closes the month.
 - **Design fidelity**: the UI was ported from a Claude Design handoff
   (dashboard, import wizard, transactions, categories, cards, templates
   screens) — OKLCH color tokens, Public Sans + IBM Plex Mono fonts, exact
