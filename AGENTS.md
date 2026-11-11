@@ -10,7 +10,7 @@ This block is written and re-added by `next dev` — verify at `node_modules/nex
 
 ## PennyTrail-specific notes
 
-- **Stack**: Next.js 16.4.2 (App Router), React 19, TypeScript, Tailwind v4,
+- **Stack**: Next.js 16.4.6 (App Router), React 19, TypeScript, Tailwind v4,
   deployed on Vercel (project `pennytrail`, linked in `.vercel/`, live at
   https://pennytrail-rsrogers.vercel.app). It's a single-user personal tool
   by design — don't introduce multi-user accounts or multi-tenancy without
