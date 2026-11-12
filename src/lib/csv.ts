@@ -229,11 +229,37 @@ function expandTwoDigitYear(y: number): number {
   return 2000 + y > new Date().getFullYear() + 1 ? 1900 + y : 2000 + y;
 }
 
+// Every format parseDateFlexible understands — the import pickers offer these
+// and the template / bank-account routes validate against them.
+export const DATE_FORMATS = [
+  "MM/DD/YYYY",
+  "DD/MM/YYYY",
+  "YYYY-MM-DD",
+  "Month DD, YYYY",
+  "DD Mon YYYY",
+  "YYYYMMDD",
+  "YYYY-MM-DD HH:MM:SS",
+] as const;
+
+export type DateFormat = (typeof DATE_FORMATS)[number];
+
+export function isDateFormat(value: unknown): value is DateFormat {
+  return typeof value === "string" && (DATE_FORMATS as readonly string[]).includes(value);
+}
+
 export function parseDateFlexible(str: unknown, format: string): string | null {
   if (!str) return null;
   const s = String(str).trim();
   let y: number, m: number, d: number;
-  if (format === "Month DD, YYYY") {
+  if (format === "DD Mon YYYY") {
+    // Day first, then a month name: "09 Nov 2026" (American Express),
+    // also "9 November 2026" and the dashed "09-Nov-2026" / "09-Nov-26".
+    const match = /^(\d{1,2})[\s-]+([A-Za-z]+)\.?,?[\s-]+(\d{4}|\d{2})$/.exec(s);
+    if (!match) return null;
+    d = +match[1];
+    m = MONTH_NAMES[match[2].toLowerCase()] ?? NaN;
+    y = +match[3];
+  } else if (format === "Month DD, YYYY") {
     // Accepts both full ("May 21, 2026") and abbreviated ("Jan 5, 2026")
     // month names, with or without the comma.
     const match = /^([A-Za-z]+)\.?\s+(\d{1,2}),?\s+(\d{4}|\d{2})$/.exec(s);

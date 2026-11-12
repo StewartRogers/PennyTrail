@@ -3,14 +3,12 @@
 import { useMemo, useState } from "react";
 import type { AppState, BankImportMapping } from "@/lib/types";
 import { importBankTransactions, updateBankAccount, type BankImportRow } from "@/lib/api";
-import { guessMapping, parseAmount, parseCSV, parseDateFlexible } from "@/lib/csv";
+import { DATE_FORMATS, guessMapping, parseAmount, parseCSV, parseDateFlexible } from "@/lib/csv";
 import { BANK_TXN_TYPE_LABELS, classifyBankLine } from "@/lib/bankClassify";
 import { fmtCurrency } from "@/lib/format";
 import { useToast } from "../ToastContext";
 import { PageTitle, PrimaryButton, SecondaryButton, inputStyle, labelStyle } from "../ui";
 import { FilePicker, errorMessage, tdStyle, thStyle, weekdayDate } from "./shared";
-
-const DATE_FORMATS = ["MM/DD/YYYY", "DD/MM/YYYY", "YYYY-MM-DD", "Month DD, YYYY", "YYYYMMDD", "YYYY-MM-DD HH:MM:SS"];
 
 interface Parsed {
   rows: BankImportRow[];

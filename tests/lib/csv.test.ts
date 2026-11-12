@@ -139,6 +139,22 @@ describe("parseDateFlexible", () => {
     expect(parseDateFlexible("Feb 30, 2026", "Month DD, YYYY")).toBeNull();
   });
 
+  it("parses the American Express DD Mon YYYY format", () => {
+    expect(parseDateFlexible("09 Nov 2026", "DD Mon YYYY")).toBe("2026-11-09");
+  });
+
+  it("parses DD Mon YYYY with a one-digit day, full month name, or dashes", () => {
+    expect(parseDateFlexible("9 Nov 2026", "DD Mon YYYY")).toBe("2026-11-09");
+    expect(parseDateFlexible("09 November 2026", "DD Mon YYYY")).toBe("2026-11-09");
+    expect(parseDateFlexible("09-Nov-2026", "DD Mon YYYY")).toBe("2026-11-09");
+    expect(parseDateFlexible("09-Nov-26", "DD Mon YYYY")).toBe("2026-11-09");
+  });
+
+  it("rejects an impossible or misordered DD Mon YYYY date", () => {
+    expect(parseDateFlexible("30 Feb 2026", "DD Mon YYYY")).toBeNull();
+    expect(parseDateFlexible("Nov 09 2026", "DD Mon YYYY")).toBeNull();
+  });
+
   it("parses YYYYMMDD", () => {
     expect(parseDateFlexible("20260813", "YYYYMMDD")).toBe("2026-08-13");
   });

@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState, type CSSProperties } from "react";
 import { NETWORKS, type AppState, type AmountConvention, type AmountMode, type Category, type Network, type TxnType } from "@/lib/types";
-import { parseCSV, guessMapping, parseAmount, parseDateFlexible } from "@/lib/csv";
+import { DATE_FORMATS, parseCSV, guessMapping, parseAmount, parseDateFlexible, type DateFormat } from "@/lib/csv";
 import { classifyTransactionType, cleanVendorName, resolveVendor } from "@/lib/classify";
 import { addTemplate, fetchFxRates, fetchState, importTransactions, updateCard, updateTransaction, type DuplicateRow, type ImportRow } from "@/lib/api";
 import { fmtCurrency, fmtDateShort } from "@/lib/format";
@@ -11,7 +11,6 @@ import { PrimaryButton, SecondaryButton, Pill, inputStyle, labelStyle } from "./
 import { useToast } from "./ToastContext";
 import type { ChildVendor, Transaction } from "@/lib/types";
 
-type DateFormat = "MM/DD/YYYY" | "DD/MM/YYYY" | "YYYY-MM-DD" | "Month DD, YYYY" | "YYYYMMDD" | "YYYY-MM-DD HH:MM:SS";
 
 interface Mapping {
   dateCol: number;
@@ -987,12 +986,11 @@ export function ImportWizard({
                             onChange={(e) => setMapping({ ...mapping, dateFormat: e.target.value as DateFormat })}
                             style={{ ...inputStyle, width: "100%" }}
                           >
-                            <option value="MM/DD/YYYY">MM/DD/YYYY</option>
-                            <option value="DD/MM/YYYY">DD/MM/YYYY</option>
-                            <option value="YYYY-MM-DD">YYYY-MM-DD</option>
-                            <option value="Month DD, YYYY">Month DD, YYYY</option>
-                            <option value="YYYYMMDD">YYYYMMDD</option>
-                            <option value="YYYY-MM-DD HH:MM:SS">YYYY-MM-DD HH:MM:SS</option>
+                            {DATE_FORMATS.map((f) => (
+                              <option key={f} value={f}>
+                                {f}
+                              </option>
+                            ))}
                           </select>
                         </td>
                       </tr>

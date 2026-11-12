@@ -3,8 +3,8 @@ import { updateState } from "@/lib/store";
 import { uid } from "@/lib/id";
 import { MAX_NAME_LENGTH, readJsonObject } from "@/lib/request";
 import { isNetwork, type Template } from "@/lib/types";
+import { isDateFormat } from "@/lib/csv";
 
-const DATE_FORMATS = ["MM/DD/YYYY", "DD/MM/YYYY", "YYYY-MM-DD", "Month DD, YYYY", "YYYYMMDD", "YYYY-MM-DD HH:MM:SS"];
 
 function isValidCol(n: unknown): boolean {
   return typeof n === "number" && Number.isInteger(n) && n >= 0;
@@ -21,7 +21,7 @@ export async function POST(request: Request) {
   if (!isValidCol(body.dateCol) || !isValidCol(body.descCol)) {
     return NextResponse.json({ error: "A date column and description column are required" }, { status: 400 });
   }
-  if (typeof body.dateFormat !== "string" || !DATE_FORMATS.includes(body.dateFormat)) {
+  if (!isDateFormat(body.dateFormat)) {
     return NextResponse.json({ error: "A valid date format is required" }, { status: 400 });
   }
   const amountMode = body.amountMode === "split" ? "split" : "single";

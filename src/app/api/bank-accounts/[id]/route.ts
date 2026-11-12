@@ -3,8 +3,8 @@ import { updateState } from "@/lib/store";
 import { MAX_NAME_LENGTH, isValidIsoDate, readJsonObject, readString } from "@/lib/request";
 import { readMoney } from "@/lib/cashflowRequest";
 import type { BankImportMapping } from "@/lib/types";
+import { isDateFormat } from "@/lib/csv";
 
-const DATE_FORMATS = ["MM/DD/YYYY", "DD/MM/YYYY", "YYYY-MM-DD", "Month DD, YYYY", "YYYYMMDD", "YYYY-MM-DD HH:MM:SS"];
 const MAX_HOLIDAYS = 2000;
 
 function readColumn(value: unknown): number | null {
@@ -20,7 +20,7 @@ function readMapping(value: unknown): BankImportMapping | null {
   const inCol = readColumn(m.inCol);
   if (dateCol === null || dateCol < 0 || descCol === null || descCol < 0 || outCol === null || inCol === null) return null;
   if (outCol < 0 && inCol < 0) return null;
-  if (typeof m.dateFormat !== "string" || !DATE_FORMATS.includes(m.dateFormat)) return null;
+  if (!isDateFormat(m.dateFormat)) return null;
   return { dateCol, descCol, outCol, inCol, dateFormat: m.dateFormat };
 }
 
