@@ -4,7 +4,7 @@ import { useMemo, useState } from "react";
 import type { AppState, Transaction } from "@/lib/types";
 import { fmtCurrency, fmtCurrencyWhole, monthKey, monthLabel, quarterKey, toISODate, yearKey } from "@/lib/format";
 import { categoryIdForTransaction, dashboardSpendForTransaction, isDashboardSpend, parentIdForTransaction } from "@/lib/vendors";
-import { currentPeriodKey, trailingPeriodKeys } from "@/lib/aggregate";
+import { cardCoverage, currentPeriodKey, partialCoverageNote, trailingPeriodKeys } from "@/lib/aggregate";
 import { addMonths, monthIndex } from "@/lib/dates";
 import { bcYearMonth } from "@/lib/bcTime";
 import { Card as PanelCard, SectionTitle, ColorDot, SegmentedControl, inputStyle } from "./ui";
@@ -273,21 +273,38 @@ export function Dashboard({
     [firstDataMonth]
   );
 
+  // With All Cards, each card is averaged over the months its own history
+  // covers (same rule as the Averages screen), so a newly imported card
+  // isn't divided by months that only an older card has data for.
+  const avgCoverage = useMemo(
+    () =>
+      cardCoverage(
+        appState.transactions.filter((t) => cardFilter === "all" || t.cardId === cardFilter),
+        trailingPeriodKeys("month", 6)
+      ),
+    [appState.transactions, cardFilter]
+  );
+
   const avgMonthlyByCategory = useMemo(() => {
     const monthSet = new Set(avgMonths);
     const totals = new Map<string, number>();
+    const avgs = new Map<string, number>();
     for (const t of spendForTrend) {
       const category = categoryIdForTransaction(t, childById, parentById);
       if (!category || !monthSet.has(monthKey(t.date))) continue;
-      totals.set(category, (totals.get(category) || 0) + dashboardSpendForTransaction(t));
+      const spend = dashboardSpendForTransaction(t);
+      totals.set(category, (totals.get(category) || 0) + spend);
+      avgs.set(category, (avgs.get(category) || 0) + spend / (avgCoverage.get(t.cardId)?.months || 1));
     }
     return Array.from(totals.entries())
       .map(([categoryId, total]) => {
         const cat = categoryById.get(categoryId);
-        return { key: categoryId, name: cat?.name || categoryId, color: cat?.color || "var(--muted)", total, avgPerMonth: total / avgMonths.length };
+        return { key: categoryId, name: cat?.name || categoryId, color: cat?.color || "var(--muted)", total, avgPerMonth: avgs.get(categoryId) || 0 };
       })
       .sort((a, b) => b.avgPerMonth - a.avgPerMonth);
-  }, [spendForTrend, avgMonths, categoryById, childById, parentById]);
+  }, [spendForTrend, avgMonths, avgCoverage, categoryById, childById, parentById]);
+
+  const avgCoverageNote = cardFilter === "all" ? partialCoverageNote(avgCoverage, avgMonths.length, appState.cards) : null;
 
   const newestFirst = (a: Transaction, b: Transaction) => (a.date < b.date ? 1 : a.date > b.date ? -1 : 0);
 
@@ -512,7 +529,14 @@ export function Dashboard({
         <PanelCard style={{ flex: 1, minWidth: 380 }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14, flexWrap: "wrap", gap: 10 }}>
             <SectionTitle>Avg Monthly Spend by Category</SectionTitle>
-            <div style={{ fontSize: 12, color: "var(--muted)" }}>{avgWindowLabel}</div>
+            <div style={{ fontSize: 12, color: "var(--muted)", textAlign: "right" }}>
+              {avgWindowLabel}
+              {avgCoverageNote && (
+                <div title="A card's spending is averaged over the months since its first transaction, so months before it was imported don't count as $0">
+                  Averaged from first transaction: {avgCoverageNote}
+                </div>
+              )}
+            </div>
           </div>
           <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13.5 }}>
             <thead>

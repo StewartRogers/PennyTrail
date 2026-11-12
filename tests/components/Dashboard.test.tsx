@@ -473,11 +473,16 @@ describe("Dashboard avg monthly spend by category", () => {
     expect(within(panel("Breakdown")).getByText("$1,129.00")).toBeInTheDocument();
   });
 
-  it("averages a second category independently", () => {
+  it("averages each card over the months its own history covers", () => {
     renderDashboard();
 
-    // Dining: t3 (60) over 6 months => $10.00/mo.
-    expect(within(panel("Avg Monthly Spend by Category")).getByText("$10.00")).toBeInTheDocument();
+    const table = within(panel("Avg Monthly Spend by Category"));
+    // Dining is all Card B (t3, 60), whose history starts 2026-04: 60 over
+    // April and May => $30.00/mo, not 60 / 6 — even with All Cards, where
+    // Card A's history fills the whole window.
+    expect(table.getByText("$30.00")).toBeInTheDocument();
+    expect(table.queryByText("$10.00")).toBeNull();
+    expect(table.getByText("Averaged from first transaction: Card B from Apr 26")).toBeInTheDocument();
   });
 
   // A card imported only recently shouldn't have its averages divided by

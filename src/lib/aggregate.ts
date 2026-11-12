@@ -1,7 +1,7 @@
-import type { Category, ChildVendor, ParentVendor, Transaction } from "./types";
-import { monthKey } from "./format";
+import type { Card, Category, ChildVendor, ParentVendor, Transaction } from "./types";
+import { monthKey, monthLabel } from "./format";
 import { bcYearMonth } from "./bcTime";
-import { netAmountForTransaction } from "./vendors";
+import { dashboardSpendForTransaction, isDashboardSpend } from "./vendors";
 
 // Trailing N *complete* periods ending at the last fully-elapsed one — the
 // current, still-in-progress month/quarter/year is deliberately excluded so
@@ -42,6 +42,39 @@ export function currentPeriodKey(group: "month" | "quarter" | "year"): string {
   return String(year);
 }
 
+export interface CardCoverage {
+  firstMonth: string;
+  months: number; // how many of the window's months fall on/after firstMonth
+}
+
+// For each card, how much of an averaging window its history actually
+// covers. A card imported only from September has no data for the months
+// before it — those aren't $0 months, they're months nobody imported — so
+// its spend is averaged over the months it covers, not the whole window.
+export function cardCoverage(transactions: Pick<Transaction, "cardId" | "date">[], windowMonths: string[]): Map<string, CardCoverage> {
+  const first = new Map<string, string>();
+  for (const t of transactions) {
+    const m = monthKey(t.date);
+    const f = first.get(t.cardId);
+    if (!f || m < f) first.set(t.cardId, m);
+  }
+  const coverage = new Map<string, CardCoverage>();
+  for (const [cardId, firstMonth] of first) {
+    coverage.set(cardId, { firstMonth, months: windowMonths.filter((m) => m >= firstMonth).length });
+  }
+  return coverage;
+}
+
+// "Amex Cobalt from Sep 26" for each card whose history starts partway
+// through the window; null when every card covers all of it.
+export function partialCoverageNote(coverage: Map<string, CardCoverage>, windowLength: number, cards: Pick<Card, "id" | "name">[]): string | null {
+  const parts = cards
+    .map((card) => ({ card, cov: coverage.get(card.id) }))
+    .filter(({ cov }) => cov && cov.months > 0 && cov.months < windowLength)
+    .map(({ card, cov }) => `${card.name} from ${monthLabel(cov!.firstMonth)}`);
+  return parts.length ? parts.join(" · ") : null;
+}
+
 export interface MonthlyAverageEntry {
   id: string;
   name: string;
@@ -67,19 +100,24 @@ export interface CategoryAverage extends MonthlyAverageEntry {
 export interface MonthlyAverages {
   months: string[]; // oldest -> newest
   categories: CategoryAverage[];
+  coverage: Map<string, CardCoverage>;
 }
 
 // Average monthly spend by category, by parent vendor within each category,
 // and by raw-description vendor within each parent, over a trailing window
-// of complete months. Division is always by the fixed window size (not
-// "months that had spend"), matching the Dashboard's avg/month convention —
-// a vendor charged twice in a 6-month window averages to total/6, not
-// total/2. Categories flagged excludeFromDashboard are dropped, same as
-// every other Dashboard-style aggregate — as is any individual transaction
-// flagged the same way (e.g. a one-off outlier that shouldn't skew this
-// vendor's average without hiding every other charge from it). Only
-// categories, parents, and vendors with nonzero spend in the window are
-// returned.
+// of complete months. Spend is purchases less refunds, same as the
+// Dashboard (dashboardSpendForTransaction).
+//
+// Each card's spend is divided by the months of the window its history
+// covers (cardCoverage), not "months that had spend": a vendor charged twice
+// on a long-held card averages to total/6, not total/2 — but a card imported
+// only two months ago averages over those two, not over four months that
+// were never imported. Categories flagged excludeFromDashboard are dropped,
+// same as every other Dashboard-style aggregate — as is any individual
+// transaction flagged the same way (e.g. a one-off outlier that shouldn't
+// skew this vendor's average without hiding every other charge from it).
+// Only categories, parents, and vendors with positive spend in the window
+// are returned.
 export function computeMonthlyAverages(
   transactions: Transaction[],
   categories: Category[],
@@ -89,6 +127,7 @@ export function computeMonthlyAverages(
 ): MonthlyAverages {
   const months = trailingPeriodKeys("month", monthsCount);
   const monthSet = new Set(months);
+  const coverage = cardCoverage(transactions, months);
   const childById = new Map(childVendors.map((c) => [c.id, c]));
   const parentById = new Map(parentVendors.map((p) => [p.id, p]));
   const categoryById = new Map(categories.map((c) => [c.id, c]));
@@ -98,8 +137,11 @@ export function computeMonthlyAverages(
   // data has — then roll up into parents and categories, so every level's
   // total is exactly the sum of the level below it.
   const childMonthly = new Map<string, Map<string, number>>();
+  // Each transaction's share of its vendor's monthly average: its spend over
+  // the number of window months its own card covers.
+  const childAvg = new Map<string, number>();
   for (const t of transactions) {
-    if (t.type !== "purchase" || !t.childVendorId || t.excludeFromDashboard) continue;
+    if (!isDashboardSpend(t) || !t.childVendorId || t.excludeFromDashboard) continue;
     const key = monthKey(t.date);
     if (!monthSet.has(key)) continue;
     const child = childById.get(t.childVendorId);
@@ -111,7 +153,11 @@ export function computeMonthlyAverages(
       byMonth = new Map();
       childMonthly.set(t.childVendorId, byMonth);
     }
-    byMonth.set(key, (byMonth.get(key) || 0) + netAmountForTransaction(t));
+    const spend = dashboardSpendForTransaction(t);
+    byMonth.set(key, (byMonth.get(key) || 0) + spend);
+    // In the window, so its card covers at least this month.
+    const covered = coverage.get(t.cardId)?.months || 1;
+    childAvg.set(t.childVendorId, (childAvg.get(t.childVendorId) || 0) + spend / covered);
   }
 
   const parentChildren = new Map<string, MonthlyAverageEntry[]>();
@@ -128,7 +174,7 @@ export function computeMonthlyAverages(
       name: child.rawName,
       color: categoryById.get(parent.category)?.color || "var(--muted)",
       monthlyTotals,
-      avgPerMonth: total / monthsCount,
+      avgPerMonth: childAvg.get(childId) || 0,
       total,
     };
     const list = parentChildren.get(parent.id) || [];
@@ -148,7 +194,7 @@ export function computeMonthlyAverages(
       name: parent.name,
       color: categoryById.get(parent.category)?.color || "var(--muted)",
       monthlyTotals,
-      avgPerMonth: total / monthsCount,
+      avgPerMonth: vendors.reduce((sum, v) => sum + v.avgPerMonth, 0),
       total,
       vendors,
     };
@@ -168,12 +214,12 @@ export function computeMonthlyAverages(
       name: cat?.name || categoryId,
       color: cat?.color || "var(--muted)",
       monthlyTotals,
-      avgPerMonth: total / monthsCount,
+      avgPerMonth: parents.reduce((sum, p) => sum + p.avgPerMonth, 0),
       total,
       parents,
     });
   }
   result.sort((a, b) => b.avgPerMonth - a.avgPerMonth);
 
-  return { months, categories: result };
+  return { months, categories: result, coverage };
 }

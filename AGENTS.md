@@ -94,10 +94,12 @@ This block is written and re-added by `next dev` — verify at `node_modules/nex
   instead of subtracted. The Dashboard and the Cards screen's "spent" use
   the narrower `dashboardSpendForTransaction` (purchases less merchant
   refunds; fees left out, cashback reported as its own KPI), so they and
-  the Categories screen answer different questions. Dashboard averages
-  count full months only and never divide by months before the selected
-  card(s)' first transaction; the trend's last bar is the current period,
-  drawn as a lighter "to date" bar.
+  the Categories screen answer different questions. Averages (Dashboard
+  and the Averages screen) count full months only, and each card's spend
+  is divided by the months since *that card's* first transaction
+  (`cardCoverage` in `src/lib/aggregate.ts`), so a newly imported card's
+  missing months never count as $0. The trend's last bar is the current
+  period, drawn as a lighter "to date" bar.
 - **Credit-side lines are never fees, and default to `credit`.** In
   `classifyTransactionType`, the fee/interest rules only fire for charges;
   after the payment and cashback keywords, any other credit-side line is a

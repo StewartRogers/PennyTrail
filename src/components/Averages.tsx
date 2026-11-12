@@ -2,7 +2,8 @@
 
 import { Fragment, useMemo, useState, type CSSProperties } from "react";
 import type { AppState } from "@/lib/types";
-import { computeMonthlyAverages, type MonthlyAverageEntry, type ParentAverage } from "@/lib/aggregate";
+import { computeMonthlyAverages, partialCoverageNote, type MonthlyAverageEntry, type ParentAverage } from "@/lib/aggregate";
+import { isDashboardSpend } from "@/lib/vendors";
 import { fmtCurrency, monthKey, monthLabel } from "@/lib/format";
 import { Card as PanelCard, ColorDot, SegmentedControl } from "./ui";
 import type { DrillDown } from "./DrillDownModal";
@@ -93,6 +94,7 @@ export function Averages({ appState, onDrillDown }: { appState: AppState; onDril
   );
 
   const monthSet = useMemo(() => new Set(averages.months), [averages.months]);
+  const coverageNote = partialCoverageNote(averages.coverage, averages.months.length, appState.cards);
 
   function toggle(set: Set<string>, setSet: (s: Set<string>) => void, id: string) {
     const next = new Set(set);
@@ -110,11 +112,14 @@ export function Averages({ appState, onDrillDown }: { appState: AppState; onDril
       // Same predicate as computeMonthlyAverages, including the per-transaction
       // exclusion — otherwise the drill-down listed (and counted) purchases
       // the row's own average had left out.
-      .filter((t) => t.type === "purchase" && !t.excludeFromDashboard && monthSet.has(monthKey(t.date)) && t.childVendorId === vendor.id)
+      .filter((t) => isDashboardSpend(t) && !t.excludeFromDashboard && monthSet.has(monthKey(t.date)) && t.childVendorId === vendor.id)
       .sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : 0));
+    const refunds = txns.filter((t) => t.type === "credit").length;
+    const purchases = txns.length - refunds;
+    const counts = `${purchases} purchase${purchases === 1 ? "" : "s"}${refunds ? `, ${refunds} refund${refunds === 1 ? "" : "s"}` : ""}`;
     onDrillDown({
       title: vendor.name,
-      subtitle: `${parent.name} · ${categoryName} · ${txns.length} purchases over the last ${MONTHS_BACK} full months`,
+      subtitle: `${parent.name} · ${categoryName} · ${counts} over the last ${MONTHS_BACK} full months`,
       transactions: txns,
       viewAllFilter: { vendorFilter: parent.id },
     });
@@ -135,6 +140,14 @@ export function Averages({ appState, onDrillDown }: { appState: AppState; onDril
         <div>
           <h1 style={{ fontSize: 27, fontWeight: 700, margin: "0 0 4px", letterSpacing: "-0.01em" }}>Averages</h1>
           <div style={{ color: "var(--muted)", fontSize: 13.5 }}>Last {MONTHS_BACK} full months</div>
+          {coverageNote && (
+            <div
+              title="A card's spending is averaged over the months since its first transaction, so months before it was imported don't count as $0"
+              style={{ color: "var(--muted)", fontSize: 12, marginTop: 2 }}
+            >
+              Averaged from first transaction: {coverageNote}
+            </div>
+          )}
         </div>
         <SegmentedControl
           options={[
