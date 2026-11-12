@@ -2,6 +2,7 @@
 
 import { useState, type FormEvent } from "react";
 import { Card, PrimaryButton, inputStyle, labelStyle } from "./ui";
+import { Logo } from "./Logo";
 
 export function LoginForm({ next }: { next: string }) {
   const [username, setUsername] = useState("");
@@ -40,9 +41,7 @@ export function LoginForm({ next }: { next: string }) {
   return (
     <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", padding: 24 }}>
       <div style={{ width: "100%", maxWidth: 360 }}>
-        <div style={{ fontSize: 22, fontWeight: 700, letterSpacing: "-0.01em", marginBottom: 18, textAlign: "center" }}>
-          PennyTrail
-        </div>
+        <Logo padding="18px 28px" style={{ marginBottom: 18 }} />
         <Card style={{ padding: 24 }}>
           <form onSubmit={handleSubmit} style={{ display: "flex", flexDirection: "column", gap: 14 }}>
             <label>

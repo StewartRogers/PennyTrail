@@ -2,6 +2,7 @@
 
 import type { CSSProperties } from "react";
 import type { Screen, Workspace } from "./App";
+import { Logo } from "./Logo";
 
 const NAV_ITEMS: Record<Workspace, { screen: Screen; label: string }[]> = {
   cards: [
@@ -120,7 +121,7 @@ export function Sidebar({
         overflowY: "auto",
       }}
     >
-      <div style={{ fontSize: 19, fontWeight: 700, letterSpacing: "-0.01em", padding: "2px 10px 16px" }}>PennyTrail</div>
+      <Logo style={{ margin: "0 4px 16px" }} />
 
       <div role="tablist" aria-label="Workspace" style={{ display: "flex", border: "1px solid var(--border)", borderRadius: 8, overflow: "hidden", margin: "0 4px 14px" }}>
         <button role="tab" aria-selected={workspace === "cards"} onClick={() => onWorkspaceChange("cards")} style={switchStyle(workspace === "cards")}>
