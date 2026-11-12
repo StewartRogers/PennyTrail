@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import type { AppState, Network } from "@/lib/types";
+import { NETWORKS, type AppState, type Network } from "@/lib/types";
 import { addCard, updateCard } from "@/lib/api";
 import { fmtCurrency } from "@/lib/format";
 import { netAmountForTransaction } from "@/lib/vendors";
@@ -19,13 +19,12 @@ function NetworkToggle({ value, onChange }: { value: Network; onChange: (n: Netw
     color: active ? "white" : "var(--text)",
   });
   return (
-    <div style={{ display: "flex", gap: 4 }}>
-      <button style={btn(value === "Visa")} onClick={() => onChange("Visa")}>
-        Visa
-      </button>
-      <button style={btn(value === "Mastercard")} onClick={() => onChange("Mastercard")}>
-        Mastercard
-      </button>
+    <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
+      {NETWORKS.map((n) => (
+        <button key={n} style={btn(value === n)} onClick={() => onChange(n)}>
+          {n}
+        </button>
+      ))}
     </div>
   );
 }

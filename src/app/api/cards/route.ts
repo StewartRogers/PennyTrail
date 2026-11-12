@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { updateState } from "@/lib/store";
 import { uid } from "@/lib/id";
 import { MAX_NAME_LENGTH, readJsonObject, readString } from "@/lib/request";
-import type { Card, Network } from "@/lib/types";
+import { isNetwork, type Card, type Network } from "@/lib/types";
 
 const CARD_COLORS = [
   "oklch(0.55 0.13 250)",
@@ -20,7 +20,7 @@ export async function POST(request: Request) {
   const name = readString(body.name);
   const bank = readString(body.bank);
   const last4 = readString(body.last4);
-  const network: Network = body.network === "Mastercard" ? "Mastercard" : "Visa";
+  const network: Network = isNetwork(body.network) ? body.network : "Visa";
   // Blank or unrecognized normalizes to CAD, same leniency as network
   // above — an add-card form shouldn't hard-reject over this field.
   const rawCurrency = readString(body.currency).toUpperCase();

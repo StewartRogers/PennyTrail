@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { updateState } from "@/lib/store";
 import { MAX_NAME_LENGTH, readJsonObject, readString } from "@/lib/request";
+import { isNetwork } from "@/lib/types";
 
 export async function PATCH(request: Request, ctx: RouteContext<"/api/cards/[id]">) {
   const { id } = await ctx.params;
@@ -22,7 +23,7 @@ export async function PATCH(request: Request, ctx: RouteContext<"/api/cards/[id]
     if (body.name !== undefined) card.name = readString(body.name);
     if (typeof body.bank === "string") card.bank = body.bank;
     if (typeof body.last4 === "string") card.last4 = body.last4;
-    if (body.network === "Visa" || body.network === "Mastercard") card.network = body.network;
+    if (isNetwork(body.network)) card.network = body.network;
     if (typeof body.currency === "string" && body.currency.trim()) {
       const currency = body.currency.trim().toUpperCase();
       if (/^[A-Z]{3}$/.test(currency)) card.currency = currency;

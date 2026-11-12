@@ -32,6 +32,16 @@ describe("POST /api/cards", () => {
     expect(card.network).toBe("Visa");
   });
 
+  it("creates an American Express card", async () => {
+    const card = await createCard({ name: "Amex Cobalt", bank: "American Express", network: "American Express" });
+    expect(card.network).toBe("American Express");
+  });
+
+  it("falls back to Visa for an unrecognized network", async () => {
+    const card = await createCard({ network: "Discover" });
+    expect(card.network).toBe("Visa");
+  });
+
   it("rejects a card with no name", async () => {
     const res = await POST(jsonRequest("http://test/api/cards", "POST", { bank: "Simplii" }));
     expect(res.status).toBe(400);
@@ -65,6 +75,15 @@ describe("PATCH /api/cards/[id]", () => {
     expect(updated.name).toBe("Renamed");
     expect(updated.bank).toBe("New Bank");
     expect(updated.network).toBe("Mastercard");
+  });
+
+  it("switches a card to American Express", async () => {
+    const card = await createCard();
+    const res = await PATCH(jsonRequest(`http://test/api/cards/${card.id}`, "PATCH", { network: "American Express" }), {
+      params: Promise.resolve({ id: card.id }),
+    });
+    expect(res.status).toBe(200);
+    expect((await res.json()).network).toBe("American Express");
   });
 
   it("updates last4 (previously silently ignored by this route)", async () => {

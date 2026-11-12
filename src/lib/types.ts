@@ -1,4 +1,10 @@
-export type Network = "Visa" | "Mastercard";
+export const NETWORKS = ["Visa", "Mastercard", "American Express"] as const;
+
+export type Network = (typeof NETWORKS)[number];
+
+export function isNetwork(value: unknown): value is Network {
+  return typeof value === "string" && (NETWORKS as readonly string[]).includes(value);
+}
 
 export type TxnType = "purchase" | "payment" | "credit" | "cashback" | "fee";
 

@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { updateState } from "@/lib/store";
 import { uid } from "@/lib/id";
 import { MAX_NAME_LENGTH, readJsonObject } from "@/lib/request";
-import type { Template } from "@/lib/types";
+import { isNetwork, type Template } from "@/lib/types";
 
 const DATE_FORMATS = ["MM/DD/YYYY", "DD/MM/YYYY", "YYYY-MM-DD", "Month DD, YYYY", "YYYYMMDD", "YYYY-MM-DD HH:MM:SS"];
 
@@ -40,7 +40,7 @@ export async function POST(request: Request) {
       id: uid("tpl"),
       name: body.name,
       bank: body.bank,
-      network: body.network === "Mastercard" ? "Mastercard" : "Visa",
+      network: isNetwork(body.network) ? body.network : "Visa",
       dateCol: body.dateCol,
       descCol: body.descCol,
       dateFormat: body.dateFormat,

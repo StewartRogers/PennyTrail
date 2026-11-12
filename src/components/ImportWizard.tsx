@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState, type CSSProperties } from "react";
-import type { AppState, AmountConvention, AmountMode, Category, Network, TxnType } from "@/lib/types";
+import { NETWORKS, type AppState, type AmountConvention, type AmountMode, type Category, type Network, type TxnType } from "@/lib/types";
 import { parseCSV, guessMapping, parseAmount, parseDateFlexible } from "@/lib/csv";
 import { classifyTransactionType, cleanVendorName, resolveVendor } from "@/lib/classify";
 import { addTemplate, fetchFxRates, fetchState, importTransactions, updateCard, updateTransaction, type DuplicateRow, type ImportRow } from "@/lib/api";
@@ -780,7 +780,7 @@ export function ImportWizard({
                 />
               </div>
               <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-                {(["Visa", "Mastercard"] as Network[]).map((n) => (
+                {NETWORKS.map((n) => (
                   <button
                     key={n}
                     onClick={() => setEditDraft({ ...editDraft, network: n })}
