@@ -33,6 +33,15 @@ export function trailingPeriodKeys(group: "month" | "quarter" | "year", count: n
   return keys;
 }
 
+// The current, still-in-progress month/quarter/year on BC's calendar — the
+// one period trailingPeriodKeys leaves out.
+export function currentPeriodKey(group: "month" | "quarter" | "year"): string {
+  const { year, month } = bcYearMonth();
+  if (group === "month") return `${year}-${String(month).padStart(2, "0")}`;
+  if (group === "quarter") return `${year}-Q${Math.floor((month - 1) / 3) + 1}`;
+  return String(year);
+}
+
 export interface MonthlyAverageEntry {
   id: string;
   name: string;

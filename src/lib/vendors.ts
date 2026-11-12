@@ -37,6 +37,20 @@ export function categorySpendForTransaction(txn: Pick<Transaction, "amount" | "r
   return txn.type === "credit" || txn.type === "cashback" ? -net : net;
 }
 
+// What the Dashboard (and the Cards screen) count as spend: purchases, less
+// merchant refunds. Narrower than categorySpendForTransaction on purpose —
+// fees stay out, and cashback has its own KPI, so netting it here too would
+// count it twice.
+export function dashboardSpendForTransaction(txn: Pick<Transaction, "amount" | "reimbursedAmount" | "type">): number {
+  if (txn.type === "purchase") return netAmountForTransaction(txn);
+  if (txn.type === "credit") return -netAmountForTransaction(txn);
+  return 0;
+}
+
+export function isDashboardSpend(txn: Pick<Transaction, "type">): boolean {
+  return txn.type === "purchase" || txn.type === "credit";
+}
+
 export function vendorNameForTransaction(txn: Pick<Transaction, "childVendorId">, childById: Map<string, ChildVendor>): string | null {
   if (!txn.childVendorId) return null;
   return childById.get(txn.childVendorId)?.rawName ?? null;

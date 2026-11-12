@@ -91,9 +91,13 @@ This block is written and re-added by `next dev` — verify at `node_modules/nex
   that spans transaction types must sign them itself — use
   `categorySpendForTransaction` in `src/lib/vendors.ts` rather than summing
   `netAmountForTransaction` across types, or refunds get added to spend
-  instead of subtracted. Note the Dashboard deliberately reports
-  `type === "purchase"` only, so it and the Categories screen answer
-  different questions.
+  instead of subtracted. The Dashboard and the Cards screen's "spent" use
+  the narrower `dashboardSpendForTransaction` (purchases less merchant
+  refunds; fees left out, cashback reported as its own KPI), so they and
+  the Categories screen answer different questions. Dashboard averages
+  count full months only and never divide by months before the selected
+  card(s)' first transaction; the trend's last bar is the current period,
+  drawn as a lighter "to date" bar.
 - **Credit-side lines are never fees, and default to `credit`.** In
   `classifyTransactionType`, the fee/interest rules only fire for charges;
   after the payment and cashback keywords, any other credit-side line is a

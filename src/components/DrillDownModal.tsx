@@ -114,7 +114,10 @@ export function DrillDownModal({
                   </div>
                 </div>
                 <div style={{ fontFamily: "var(--mono)", fontWeight: 600, fontSize: 13.5, flexShrink: 0 }}>
-                  {fmtCurrency(netAmountForTransaction(t))}
+                  {/* A refund or reward gives money back, so show it negative —
+                      the Dashboard's drill-downs now list refunds beside the
+                      purchases they offset. */}
+                  {fmtCurrency(t.type === "credit" || t.type === "cashback" ? -netAmountForTransaction(t) : netAmountForTransaction(t))}
                 </div>
               </div>
             );

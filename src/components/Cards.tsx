@@ -4,7 +4,7 @@ import { useMemo, useState } from "react";
 import { NETWORKS, type AppState, type Network } from "@/lib/types";
 import { addCard, updateCard } from "@/lib/api";
 import { fmtCurrency } from "@/lib/format";
-import { netAmountForTransaction } from "@/lib/vendors";
+import { dashboardSpendForTransaction, isDashboardSpend } from "@/lib/vendors";
 import { useToast } from "./ToastContext";
 import { PageTitle, PrimaryButton, inputStyle } from "./ui";
 
@@ -39,9 +39,10 @@ export function Cards({ appState, onReload }: { appState: AppState; onReload: ()
 
   const totals = useMemo(() => {
     const map = new Map<string, number>();
+    // Same definition of spend as the Dashboard: purchases less refunds.
     for (const t of appState.transactions) {
-      if (t.type !== "purchase") continue;
-      map.set(t.cardId, (map.get(t.cardId) || 0) + netAmountForTransaction(t));
+      if (!isDashboardSpend(t)) continue;
+      map.set(t.cardId, (map.get(t.cardId) || 0) + dashboardSpendForTransaction(t));
     }
     return map;
   }, [appState.transactions]);

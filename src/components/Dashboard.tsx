@@ -3,8 +3,9 @@
 import { useMemo, useState } from "react";
 import type { AppState, Transaction } from "@/lib/types";
 import { fmtCurrency, fmtCurrencyWhole, monthKey, monthLabel, quarterKey, toISODate, yearKey } from "@/lib/format";
-import { categoryIdForTransaction, netAmountForTransaction, parentIdForTransaction } from "@/lib/vendors";
-import { trailingPeriodKeys } from "@/lib/aggregate";
+import { categoryIdForTransaction, dashboardSpendForTransaction, isDashboardSpend, parentIdForTransaction } from "@/lib/vendors";
+import { currentPeriodKey, trailingPeriodKeys } from "@/lib/aggregate";
+import { addMonths, monthIndex } from "@/lib/dates";
 import { bcYearMonth } from "@/lib/bcTime";
 import { Card as PanelCard, SectionTitle, ColorDot, SegmentedControl, inputStyle } from "./ui";
 import type { DrillDown } from "./DrillDownModal";
@@ -95,7 +96,9 @@ export function Dashboard({
     });
   }, [appState.transactions, cardFilter, rangePreset, childById, parentById, excludedCategoryIds]);
 
-  const purchases = useMemo(() => filtered.filter((t) => t.type === "purchase"), [filtered]);
+  // Spend is purchases less merchant refunds (dashboardSpendForTransaction):
+  // a $100 purchase and its $100 refund net to $0, not $100.
+  const spendTxns = useMemo(() => filtered.filter(isDashboardSpend), [filtered]);
 
   // Spend in a dashboard-excluded category or transaction (e.g. reimbursed
   // expenses, or a one-off outlier) still gets paid off on the card, so it
@@ -107,50 +110,82 @@ export function Dashboard({
     const cutoff = rangeCutoff(rangePreset);
     return appState.transactions
       .filter((t) => {
-        if (t.type !== "purchase") return false;
+        if (!isDashboardSpend(t)) return false;
         if (cardFilter !== "all" && t.cardId !== cardFilter) return false;
         if (cutoff && t.date < cutoff) return false;
         if (t.excludeFromDashboard) return true;
         const categoryId = categoryIdForTransaction(t, childById, parentById);
         return categoryId ? excludedCategoryIds.has(categoryId) : false;
       })
-      .reduce((sum, t) => sum + netAmountForTransaction(t), 0);
+      .reduce((sum, t) => sum + dashboardSpendForTransaction(t), 0);
   }, [appState.transactions, cardFilter, rangePreset, childById, parentById, excludedCategoryIds]);
 
   // The trend chart always shows a fixed trailing calendar window regardless
   // of the top-of-page range preset (6mo/12mo/YTD/All) — only the card
   // filter narrows it — so switching presets can't shrink or shift it.
-  const purchasesForTrend = useMemo(
+  const spendForTrend = useMemo(
     () =>
       appState.transactions.filter((t) => {
-        if (t.type !== "purchase" || t.excludeFromDashboard || (cardFilter !== "all" && t.cardId !== cardFilter)) return false;
+        if (!isDashboardSpend(t) || t.excludeFromDashboard || (cardFilter !== "all" && t.cardId !== cardFilter)) return false;
         const categoryId = categoryIdForTransaction(t, childById, parentById);
         return !(categoryId && excludedCategoryIds.has(categoryId));
       }),
     [appState.transactions, cardFilter, childById, parentById, excludedCategoryIds]
   );
 
+  // The first month the selected card(s) have any history at all. Months
+  // before it aren't $0 months — they're months nobody imported — so the
+  // averages below never divide by them.
+  const firstDataMonth = useMemo(() => {
+    let earliest: string | null = null;
+    for (const t of appState.transactions) {
+      if (cardFilter !== "all" && t.cardId !== cardFilter) continue;
+      if (earliest === null || t.date < earliest) earliest = t.date;
+    }
+    return earliest ? monthKey(earliest) : null;
+  }, [appState.transactions, cardFilter]);
+
+  const lastFullMonth = addMonths(currentPeriodKey("month"), -1);
+
   const kpis = useMemo(() => {
-    const spend = purchases.reduce((sum, t) => sum + netAmountForTransaction(t), 0);
+    const spend = spendTxns.reduce((sum, t) => sum + dashboardSpendForTransaction(t), 0);
     const rawPayments = filtered.filter((t) => t.type === "payment").reduce((sum, t) => sum + t.amount, 0);
     const payments = Math.max(0, rawPayments - excludedSpend);
     const cashback = filtered.filter((t) => t.type === "cashback").reduce((sum, t) => sum + t.amount, 0);
-    const monthsInData = new Set(purchases.map((t) => monthKey(t.date)));
-    const avgMonthly = monthsInData.size > 0 ? spend / monthsInData.size : 0;
-    return { spend, payments, cashback, avgMonthly };
-  }, [filtered, purchases, excludedSpend]);
+    // Full months only: the in-progress month would count as a whole month
+    // while holding only part of one, dragging the average down. The window
+    // runs from the range start (or the first month with history, if later)
+    // to the last full month; null when that holds no full month yet.
+    const cutoff = rangeCutoff(rangePreset);
+    const cutoffMonth = cutoff ? monthKey(cutoff) : null;
+    const firstMonth = firstDataMonth && cutoffMonth && cutoffMonth > firstDataMonth ? cutoffMonth : firstDataMonth;
+    let avgMonthly: number | null = null;
+    let avgMonthCount = 0;
+    if (firstMonth && firstMonth <= lastFullMonth) {
+      avgMonthCount = monthIndex(lastFullMonth) - monthIndex(firstMonth) + 1;
+      const fullMonthSpend = spendTxns
+        .filter((t) => monthKey(t.date) <= lastFullMonth)
+        .reduce((sum, t) => sum + dashboardSpendForTransaction(t), 0);
+      avgMonthly = fullMonthSpend / avgMonthCount;
+    }
+    return { spend, payments, cashback, avgMonthly, avgMonthCount };
+  }, [filtered, spendTxns, excludedSpend, rangePreset, firstDataMonth, lastFullMonth]);
 
+  // The last N-1 complete periods plus the current one, drawn as a lighter
+  // "to date" bar so this month's spend is visible without passing for a
+  // finished month.
   const trendBuckets = useMemo(() => {
     const keyFn = trendGroup === "month" ? monthKey : trendGroup === "quarter" ? quarterKey : yearKey;
     const labelFn = trendGroup === "month" ? monthLabel : (k: string) => k;
     const totals = new Map<string, number>();
-    for (const t of purchasesForTrend) {
+    for (const t of spendForTrend) {
       const key = keyFn(t.date);
-      totals.set(key, (totals.get(key) || 0) + netAmountForTransaction(t));
+      totals.set(key, (totals.get(key) || 0) + dashboardSpendForTransaction(t));
     }
-    const keys = trailingPeriodKeys(trendGroup, TREND_BUCKET_COUNT[trendGroup]);
-    return keys.map((key) => ({ key, label: labelFn(key), total: totals.get(key) || 0 }));
-  }, [purchasesForTrend, trendGroup]);
+    const current = currentPeriodKey(trendGroup);
+    const keys = [...trailingPeriodKeys(trendGroup, TREND_BUCKET_COUNT[trendGroup] - 1), current];
+    return keys.map((key) => ({ key, label: labelFn(key), total: totals.get(key) || 0, partial: key === current }));
+  }, [spendForTrend, trendGroup]);
 
   const maxBarTotal = Math.max(1, ...trendBuckets.map((b) => b.total));
   const chartWidth = 760;
@@ -165,10 +200,10 @@ export function Dashboard({
 
   const breakdownRows = useMemo(() => {
     const totals = new Map<string, number>();
-    for (const t of purchases) {
+    for (const t of spendTxns) {
       const key = breakdownMode === "category" ? categoryIdForTransaction(t, childById, parentById) : parentIdForTransaction(t, childById);
       if (!key) continue;
-      totals.set(key, (totals.get(key) || 0) + netAmountForTransaction(t));
+      totals.set(key, (totals.get(key) || 0) + dashboardSpendForTransaction(t));
     }
     const rows = Array.from(totals.entries())
       .map(([key, total]) => {
@@ -184,16 +219,17 @@ export function Dashboard({
       .sort((a, b) => b.total - a.total)
       .slice(0, 8);
     const max = Math.max(1, ...rows.map((r) => r.total));
-    return rows.map((r) => ({ ...r, widthPct: (r.total / max) * 100 }));
-  }, [purchases, breakdownMode, categoryById, childById, parentById]);
+    // A refund of a purchase from before the range can leave a row negative.
+    return rows.map((r) => ({ ...r, widthPct: (Math.max(0, r.total) / max) * 100 }));
+  }, [spendTxns, breakdownMode, categoryById, childById, parentById]);
 
   const topMerchants = useMemo(() => {
     const byParent = new Map<string, { total: number; count: number }>();
-    for (const t of purchases) {
+    for (const t of spendTxns) {
       const parentId = parentIdForTransaction(t, childById);
       if (!parentId) continue;
       const entry = byParent.get(parentId) || { total: 0, count: 0 };
-      entry.total += netAmountForTransaction(t);
+      entry.total += dashboardSpendForTransaction(t);
       entry.count += 1;
       byParent.set(parentId, entry);
     }
@@ -205,7 +241,7 @@ export function Dashboard({
       })
       .sort((a, b) => b.total - a.total)
       .slice(0, 6);
-  }, [purchases, childById, parentById, categoryById]);
+  }, [spendTxns, childById, parentById, categoryById]);
 
   // Same window/filters as everything else on the page (respects both the
   // card filter and the range preset above) — picking a single card up top
@@ -213,9 +249,9 @@ export function Dashboard({
   // Merchants do in that case.
   const spendingByCard = useMemo(() => {
     const byCard = new Map<string, { total: number; count: number }>();
-    for (const t of purchases) {
+    for (const t of spendTxns) {
       const entry = byCard.get(t.cardId) || { total: 0, count: 0 };
-      entry.total += netAmountForTransaction(t);
+      entry.total += dashboardSpendForTransaction(t);
       entry.count += 1;
       byCard.set(t.cardId, entry);
     }
@@ -225,35 +261,53 @@ export function Dashboard({
         return { cardId, name: card?.name || cardId, bank: card?.bank || "—", total: data.total, count: data.count };
       })
       .sort((a, b) => b.total - a.total);
-  }, [purchases, cardById]);
+  }, [spendTxns, cardById]);
 
-  // Trailing 6 full months (dividing by a fixed 6, not "months that had
-  // spend") so a category with two $100 months and four $0 months correctly
-  // averages to ~$33/mo, not $100/mo.
+  // Up to the trailing 6 full months, but never reaching back before the
+  // first month with any history. Within that window every month counts,
+  // spend or not — a category with two $100 months and four $0 months
+  // averages ~$33/mo, not $100/mo — but months before the history starts
+  // aren't $0 months, they're months that were never imported.
+  const avgMonths = useMemo(
+    () => (firstDataMonth ? trailingPeriodKeys("month", 6).filter((m) => m >= firstDataMonth) : []),
+    [firstDataMonth]
+  );
+
   const avgMonthlyByCategory = useMemo(() => {
-    const months = trailingPeriodKeys("month", 6);
-    const monthSet = new Set(months);
+    const monthSet = new Set(avgMonths);
     const totals = new Map<string, number>();
-    for (const t of purchasesForTrend) {
+    for (const t of spendForTrend) {
       const category = categoryIdForTransaction(t, childById, parentById);
       if (!category || !monthSet.has(monthKey(t.date))) continue;
-      totals.set(category, (totals.get(category) || 0) + netAmountForTransaction(t));
+      totals.set(category, (totals.get(category) || 0) + dashboardSpendForTransaction(t));
     }
     return Array.from(totals.entries())
       .map(([categoryId, total]) => {
         const cat = categoryById.get(categoryId);
-        return { key: categoryId, name: cat?.name || categoryId, color: cat?.color || "var(--muted)", total, avgPerMonth: total / months.length };
+        return { key: categoryId, name: cat?.name || categoryId, color: cat?.color || "var(--muted)", total, avgPerMonth: total / avgMonths.length };
       })
       .sort((a, b) => b.avgPerMonth - a.avgPerMonth);
-  }, [purchasesForTrend, categoryById, childById, parentById]);
+  }, [spendForTrend, avgMonths, categoryById, childById, parentById]);
 
-  function purchasesFor(predicate: (t: Transaction) => boolean) {
-    return purchases.filter(predicate).sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : 0));
+  const newestFirst = (a: Transaction, b: Transaction) => (a.date < b.date ? 1 : a.date > b.date ? -1 : 0);
+
+  function spendFor(predicate: (t: Transaction) => boolean) {
+    return spendTxns.filter(predicate).sort(newestFirst);
   }
 
-  function trendPurchasesFor(predicate: (t: Transaction) => boolean) {
-    return purchasesForTrend.filter(predicate).sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : 0));
+  function trendSpendFor(predicate: (t: Transaction) => boolean) {
+    return spendForTrend.filter(predicate).sort(newestFirst);
   }
+
+  // "3 purchases", or "3 purchases, 1 refund" once refunds are in the list.
+  function countLabel(txns: Transaction[]): string {
+    const refunds = txns.filter((t) => t.type === "credit").length;
+    const purchases = txns.length - refunds;
+    const base = `${purchases} purchase${purchases === 1 ? "" : "s"}`;
+    return refunds ? `${base}, ${refunds} refund${refunds === 1 ? "" : "s"}` : base;
+  }
+
+  const avgWindowLabel = avgMonths.length === 1 ? "Last full month" : `Last ${avgMonths.length} full months`;
 
   return (
     <div>
@@ -296,7 +350,14 @@ export function Dashboard({
                 : undefined,
           },
           { label: "Net Cashback Earned", value: fmtCurrency(kpis.cashback), color: "var(--positive)" },
-          { label: "Avg Monthly Spend", value: fmtCurrency(kpis.avgMonthly) },
+          {
+            label: "Avg Monthly Spend",
+            value: kpis.avgMonthly === null ? "—" : fmtCurrency(kpis.avgMonthly),
+            title:
+              kpis.avgMonthly === null
+                ? "Needs at least one full month of history in this range"
+                : `Average over ${kpis.avgMonthCount} full month${kpis.avgMonthCount === 1 ? "" : "s"}; the current month is left out until it ends`,
+          },
         ].map((kpi) => (
           <PanelCard key={kpi.label} style={{ flex: 1, minWidth: 180, padding: "18px 20px" }}>
             <div title={kpi.title} style={{ fontSize: 12.5, color: "var(--muted)", marginBottom: 8 }}>
@@ -325,7 +386,9 @@ export function Dashboard({
         <svg width="100%" height={chartHeight} viewBox={`0 0 ${chartWidth} ${chartHeight}`}>
           {trendBuckets.map((bar, i) => {
             const x = startX + i * (barWidth + gap);
-            const height = maxBarTotal > 0 ? (bar.total / maxBarTotal) * barAreaHeight : 0;
+            // A period whose refunds outweigh its purchases draws no bar
+            // rather than a negative-height one.
+            const height = (Math.max(0, bar.total) / maxBarTotal) * barAreaHeight;
             const y = barAreaBottom - height;
             const keyFn = trendGroup === "month" ? monthKey : trendGroup === "quarter" ? quarterKey : yearKey;
             return (
@@ -336,19 +399,26 @@ export function Dashboard({
                   width={barWidth}
                   height={height}
                   fill={TREND_COLORS[i % TREND_COLORS.length]}
+                  fillOpacity={bar.partial ? 0.4 : 1}
                   rx={3}
                   style={{ cursor: "pointer" }}
-                  onClick={() =>
+                  onClick={() => {
+                    const txns = trendSpendFor((t) => keyFn(t.date) === bar.key);
                     onDrillDown({
-                      title: bar.label,
-                      subtitle: `${trendPurchasesFor((t) => keyFn(t.date) === bar.key).length} purchases`,
-                      transactions: trendPurchasesFor((t) => keyFn(t.date) === bar.key),
-                    })
-                  }
+                      title: bar.partial ? `${bar.label} (to date)` : bar.label,
+                      subtitle: countLabel(txns),
+                      transactions: txns,
+                    });
+                  }}
                 />
                 <text x={x + barWidth / 2} y={200} textAnchor="middle" fontSize={11} fill="var(--muted)" fontFamily="var(--font-sans), sans-serif">
                   {bar.label}
                 </text>
+                {bar.partial && (
+                  <text x={x + barWidth / 2} y={213} textAnchor="middle" fontSize={9.5} fill="var(--muted)" fontFamily="var(--font-sans), sans-serif">
+                    to date
+                  </text>
+                )}
                 <text x={x + barWidth / 2} y={20} textAnchor="middle" fontSize={10} fontWeight={600} fill="var(--text)" fontFamily="var(--mono)">
                   {fmtCurrencyWhole(bar.total)}
                 </text>
@@ -375,14 +445,14 @@ export function Dashboard({
             <div
               key={row.key}
               onClick={() => {
-                const txns = purchasesFor((t) =>
+                const txns = spendFor((t) =>
                   breakdownMode === "category"
                     ? categoryIdForTransaction(t, childById, parentById) === row.key
                     : parentIdForTransaction(t, childById) === row.key
                 );
                 onDrillDown({
                   title: row.name,
-                  subtitle: `${txns.length} purchases`,
+                  subtitle: countLabel(txns),
                   transactions: txns,
                   viewAllFilter: breakdownMode === "category" ? { categoryFilter: row.key } : { vendorFilter: row.key },
                 });
@@ -413,10 +483,10 @@ export function Dashboard({
               <div
                 key={m.parentId}
                 onClick={() => {
-                  const txns = purchasesFor((t) => parentIdForTransaction(t, childById) === m.parentId);
+                  const txns = spendFor((t) => parentIdForTransaction(t, childById) === m.parentId);
                   onDrillDown({
                     title: m.vendor,
-                    subtitle: `${txns.length} purchases`,
+                    subtitle: countLabel(txns),
                     transactions: txns,
                     viewAllFilter: { vendorFilter: m.parentId },
                   });
@@ -442,7 +512,7 @@ export function Dashboard({
         <PanelCard style={{ flex: 1, minWidth: 380 }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14, flexWrap: "wrap", gap: 10 }}>
             <SectionTitle>Avg Monthly Spend by Category</SectionTitle>
-            <div style={{ fontSize: 12, color: "var(--muted)" }}>Last 6 full months</div>
+            <div style={{ fontSize: 12, color: "var(--muted)" }}>{avgWindowLabel}</div>
           </div>
           <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13.5 }}>
             <thead>
@@ -454,7 +524,7 @@ export function Dashboard({
                   Avg / Month
                 </th>
                 <th style={{ textAlign: "right", padding: "0 0 8px 10px", fontSize: 11.5, fontWeight: 600, color: "var(--muted)", borderBottom: "1px solid var(--border)" }}>
-                  Total (6mo)
+                  Total ({avgMonths.length}mo)
                 </th>
               </tr>
             </thead>
@@ -463,11 +533,11 @@ export function Dashboard({
                 <tr
                   key={row.key}
                   onClick={() => {
-                    const months = new Set(trailingPeriodKeys("month", 6));
-                    const txns = trendPurchasesFor((t) => categoryIdForTransaction(t, childById, parentById) === row.key && months.has(monthKey(t.date)));
+                    const months = new Set(avgMonths);
+                    const txns = trendSpendFor((t) => categoryIdForTransaction(t, childById, parentById) === row.key && months.has(monthKey(t.date)));
                     onDrillDown({
                       title: row.name,
-                      subtitle: `${txns.length} purchases over the last 6 full months`,
+                      subtitle: `${countLabel(txns)} over the ${avgWindowLabel.toLowerCase()}`,
                       transactions: txns,
                       viewAllFilter: { categoryFilter: row.key },
                     });
@@ -500,10 +570,10 @@ export function Dashboard({
               <div
                 key={row.cardId}
                 onClick={() => {
-                  const txns = purchasesFor((t) => t.cardId === row.cardId);
+                  const txns = spendFor((t) => t.cardId === row.cardId);
                   onDrillDown({
                     title: row.name,
-                    subtitle: `${txns.length} purchases`,
+                    subtitle: countLabel(txns),
                     transactions: txns,
                     viewAllFilter: { cardFilter: row.cardId },
                   });

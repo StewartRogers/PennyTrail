@@ -24,10 +24,11 @@ afterEach(() => {
 
 // Derived from NOW:
 //   12mo KPI cutoff        2025-07-01
-//   trend window (12 mths) 2025-05 .. 2026-05  (June 2026 is in progress, so excluded)
-//   avg-by-category window 2025-12 .. 2026-05
-const IN_TREND_BEFORE_CUTOFF = "2025-06-10"; // inside the trend window, before the KPI cutoff
-const CURRENT_MONTH = "2026-06-10"; // inside the KPI range, outside the trend window
+//   trend window (12 bars) 2025-07 .. 2026-05 full months, plus 2026-06 "to date"
+//   avg-by-category window 2025-12 .. 2026-05 (never before the first month with data)
+//   avg-monthly KPI window range start (or first data month) .. 2026-05
+const BEFORE_CUTOFF = "2025-06-10"; // before both the KPI cutoff and the trend window
+const CURRENT_MONTH = "2026-06-10"; // inside the KPI range; the trend's partial "to date" bar
 
 function buildState(): AppState {
   return makeAppState({
@@ -57,7 +58,7 @@ function buildState(): AppState {
       // Dashboard-excluded category.
       makeTransaction({ id: "t6", cardId: "card_a", date: "2026-05-22", type: "purchase", amount: 200, childVendorId: "c_work" }),
       makeTransaction({ id: "t7", cardId: "card_a", date: CURRENT_MONTH, type: "purchase", amount: 999, childVendorId: "c_costco" }),
-      makeTransaction({ id: "t8", cardId: "card_a", date: IN_TREND_BEFORE_CUTOFF, type: "purchase", amount: 777, childVendorId: "c_costco" }),
+      makeTransaction({ id: "t8", cardId: "card_a", date: BEFORE_CUTOFF, type: "purchase", amount: 777, childVendorId: "c_costco" }),
     ],
   });
 }
@@ -119,18 +120,87 @@ describe("Dashboard KPIs", () => {
     expect(kpi("Total Payments")).toBe("$0.00");
   });
 
-  it("averages spend over the months that actually have purchases", () => {
+  it("averages over full months only, from the start of the range", () => {
     renderDashboard();
 
-    // Purchases fall in 2026-03, 2026-04 and 2026-06 => 1189 / 3.
-    expect(kpi("Avg Monthly Spend")).toBe("$396.33");
+    // 12mo range starts 2025-07; the last full month is 2026-05 => 11 months.
+    // Full-month spend is t1 100 + t2 30 + t3 60 = 190 (t7, this month's
+    // $999, waits until June is over) => 190 / 11.
+    expect(kpi("Avg Monthly Spend")).toBe("$17.27");
+  });
+
+  it("starts the average at the first month with history, not the range start", () => {
+    renderDashboard();
+
+    fireEvent.change(screen.getByRole("combobox"), { target: { value: "card_b" } });
+
+    // Card B's history begins 2026-04 (t3), so its average covers April and
+    // May only: 60 / 2 — not 60 / 11 with nine never-imported months as $0.
+    expect(kpi("Avg Monthly Spend")).toBe("$30.00");
+  });
+
+  it("shows a dash for the average until there is a full month of history", () => {
+    const state = buildState();
+    state.transactions = [
+      makeTransaction({ id: "n", cardId: "card_a", date: CURRENT_MONTH, type: "purchase", amount: 80, childVendorId: "c_costco" }),
+    ];
+    renderDashboard(state);
+
+    expect(kpi("Total Spend")).toBe("$80.00");
+    expect(kpi("Avg Monthly Spend")).toBe("—");
   });
 
   it("shows zeroes rather than NaN when there are no transactions", () => {
     renderDashboard(makeAppState({ cards: [], categories: [], transactions: [] }));
 
     expect(kpi("Total Spend")).toBe("$0.00");
-    expect(kpi("Avg Monthly Spend")).toBe("$0.00");
+    expect(kpi("Avg Monthly Spend")).toBe("—");
+  });
+});
+
+describe("Dashboard refunds", () => {
+  // A merchant refund resolves to the same vendor as the purchase it reverses.
+  function withRefund(): AppState {
+    const state = buildState();
+    state.transactions.push(
+      makeTransaction({ id: "r1", cardId: "card_a", date: "2026-04-12", type: "credit", amount: 40, childVendorId: "c_costco" })
+    );
+    return state;
+  }
+
+  it("subtracts refunds from Total Spend", () => {
+    renderDashboard(withRefund());
+
+    // 1189 - 40.
+    expect(kpi("Total Spend")).toBe("$1,149.00");
+  });
+
+  it("nets refunds in the breakdown, the trend, and the card totals", () => {
+    renderDashboard(withRefund());
+
+    // Groceries / Costco / Card A: 1129 - 40 = 1089.
+    expect(within(panel("Breakdown")).getByText("$1,089.00")).toBeInTheDocument();
+    expect(within(panel("Top Merchants")).getByText("$1,089.00")).toBeInTheDocument();
+    expect(within(panel("Spending by Card")).getByText("$1,089.00")).toBeInTheDocument();
+    // April: t2 net 30 + t3 60 - 40 = 50.
+    expect(screen.getByText("$50")).toBeInTheDocument();
+  });
+
+  it("lists the refund in the drill-down and counts it separately", () => {
+    const { onDrillDown } = renderDashboard(withRefund());
+
+    fireEvent.click(within(panel("Breakdown")).getByText("Groceries"));
+
+    const arg = onDrillDown.mock.calls[0][0];
+    expect(arg.subtitle).toBe("3 purchases, 1 refund");
+    expect(arg.transactions.map((t: { id: string }) => t.id).sort()).toEqual(["r1", "t1", "t2", "t7"]);
+  });
+
+  it("leaves cashback out of spend, since it has its own KPI", () => {
+    renderDashboard(withRefund());
+
+    expect(kpi("Net Cashback Earned")).toBe("$25.00");
+    expect(kpi("Total Spend")).toBe("$1,149.00");
   });
 });
 
@@ -166,12 +236,26 @@ describe("Dashboard filters", () => {
 });
 
 describe("Dashboard spending trend", () => {
-  it("excludes the current, still-in-progress month", () => {
+  it("shows the current month as a partial, to-date bar after the full months", () => {
     renderDashboard();
 
     expect(screen.getByText("May 26")).toBeInTheDocument();
-    // June 2026 is in progress; showing it would render a misleadingly short bar.
-    expect(screen.queryByText("Jun 26")).toBeNull();
+    expect(screen.getByText("Jun 26")).toBeInTheDocument();
+    expect(screen.getAllByText("to date")).toHaveLength(1);
+    expect(screen.getByText("$999")).toBeInTheDocument(); // t7, June so far
+    // Still 12 bars: 11 full months back to Jul 2025, so Jun 2025 is out.
+    expect(screen.getByText("Jul 25")).toBeInTheDocument();
+    expect(screen.queryByText("Jun 25")).toBeNull();
+  });
+
+  it("titles the partial bar's drill-down as to date", () => {
+    const { onDrillDown } = renderDashboard();
+
+    fireEvent.click(screen.getByText("Jun 26").previousElementSibling!);
+
+    const arg = onDrillDown.mock.calls[0][0];
+    expect(arg.title).toBe("Jun 26 (to date)");
+    expect(arg.transactions.map((t: { id: string }) => t.id)).toEqual(["t7"]);
   });
 
   it("zero-fills months that have no transactions", () => {
@@ -192,25 +276,29 @@ describe("Dashboard spending trend", () => {
   // The trend is a fixed trailing calendar window; only the card filter
   // narrows it, so changing the range preset must not move it.
   it("ignores the range preset", () => {
-    renderDashboard();
-
-    // t8 is before the 12-month KPI cutoff but inside the trend window.
-    expect(screen.getByText("$777")).toBeInTheDocument();
-    expect(kpi("Total Spend")).toBe("$1,189.00");
+    const state = buildState();
+    // Inside the trend window, but before the 6mo KPI cutoff (2026-01-01).
+    state.transactions.push(
+      makeTransaction({ id: "t9", cardId: "card_a", date: "2025-09-10", type: "purchase", amount: 555, childVendorId: "c_costco" })
+    );
+    renderDashboard(state);
+    expect(screen.getByText("$555")).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: "6mo" }));
 
-    expect(screen.getByText("$777")).toBeInTheDocument();
+    expect(kpi("Total Spend")).toBe("$1,189.00"); // t9 is out of the KPIs...
+    expect(screen.getByText("$555")).toBeInTheDocument(); // ...but not the trend
   });
 
-  it("regroups into quarters on demand", () => {
+  it("regroups into quarters on demand, with the current quarter to date", () => {
     renderDashboard();
 
     fireEvent.click(screen.getByRole("button", { name: "Quarter" }));
 
-    // Trailing 8 complete quarters ending at Q1 2026; Q2 2026 is in progress.
+    // Seven complete quarters ending at Q1 2026, then Q2 2026 so far.
     expect(screen.getByText("2026-Q1")).toBeInTheDocument();
-    expect(screen.queryByText("2026-Q2")).toBeNull();
+    expect(screen.getByText("2026-Q2")).toBeInTheDocument();
+    expect(screen.getAllByText("to date")).toHaveLength(1);
   });
 });
 
@@ -390,5 +478,19 @@ describe("Dashboard avg monthly spend by category", () => {
 
     // Dining: t3 (60) over 6 months => $10.00/mo.
     expect(within(panel("Avg Monthly Spend by Category")).getByText("$10.00")).toBeInTheDocument();
+  });
+
+  // A card imported only recently shouldn't have its averages divided by
+  // months that were simply never imported.
+  it("shortens the window to the months since the history starts", () => {
+    renderDashboard();
+
+    fireEvent.change(screen.getByRole("combobox"), { target: { value: "card_b" } });
+
+    const table = within(panel("Avg Monthly Spend by Category"));
+    // Card B starts 2026-04: Dining 60 over April and May => $30.00/mo.
+    expect(table.getByText("Last 2 full months")).toBeInTheDocument();
+    expect(table.getByText("Total (2mo)")).toBeInTheDocument();
+    expect(table.getByText("$30.00")).toBeInTheDocument();
   });
 });
