@@ -20,6 +20,7 @@ import { PageTitle, PrimaryButton, inputStyle, labelStyle } from "../ui";
 import {
   ConfirmButton,
   ConfirmationCell,
+  CopyButton,
   DateCell,
   MoneyCell,
   STATUS_LABELS,
@@ -30,6 +31,7 @@ import {
   longMonthLabel,
   monthsForAccount,
   parseMoneyInput,
+  plainAmountText,
   shortDate,
   statusColor,
   tdStyle,
@@ -449,10 +451,10 @@ function EntryRowView({ row, run }: { row: EntryRow; run: Run }) {
           // Edits whichever date is shown: the real one once there is one.
           onCommit={(v) => update(e.postedDate !== undefined ? { postedDate: v } : { postingDate: v })}
         />
-        {(e.dateUncertain || e.dueDate !== shownDate) && (
-          <div style={{ fontSize: 10.5, color: "var(--muted)", paddingLeft: 4 }}>
-            {e.dateUncertain ? "date is an estimate" : `due ${shortDate(e.dueDate)}`}
-          </div>
+        {/* No "due" date here: a projected date is just the plan, and the user
+            moves it to the day it was actually paid. */}
+        {e.dateUncertain && (
+          <div style={{ fontSize: 10.5, color: "var(--muted)", paddingLeft: 4 }}>date is an estimate</div>
         )}
       </td>
       {/* Withdrawals (money out) in the first column, deposits in the second. */}
@@ -499,15 +501,31 @@ function EntryRowView({ row, run }: { row: EntryRow; run: Run }) {
 // amount, so a stale actual can't shadow it — except on a bank-matched
 // entry, where it corrects the actual and keeps the projection, which
 // unmatching falls back to.
+//
+// A withdrawal gets a copy icon that copies the bare number ("9999.99") for
+// pasting into the banking app — none on a deposit, or on a zero withdrawal.
+// Every withdrawal cell keeps the icon's space, so the amounts line up.
 function AmountCell({ entry: e, update }: { entry: CashFlowEntry; update: (patch: Parameters<typeof updateCashFlowEntry>[1]) => Promise<void> }) {
+  const amount = entryAmount(e);
+  const money = (
+    <MoneyCell
+      ariaLabel={`Amount of ${e.name}`}
+      value={amount}
+      onCommit={(v) => update(e.bankTransactionId ? { actualAmount: v ?? 0 } : { expectedAmount: v ?? 0, actualAmount: null })}
+      // minWidth 0 lets the input shrink beside the copy icon in a flex row.
+      style={{ color: e.kind === "deposit" ? "var(--positive)" : "var(--text)", minWidth: 0 }}
+    />
+  );
+  if (e.kind === "deposit") return <td style={{ ...tdStyle, width: 120 }}>{money}</td>;
+  const copyable = Math.round(amount * 100) > 0;
   return (
-    <td style={{ ...tdStyle, width: 120 }}>
-      <MoneyCell
-        ariaLabel={`Amount of ${e.name}`}
-        value={entryAmount(e)}
-        onCommit={(v) => update(e.bankTransactionId ? { actualAmount: v ?? 0 } : { expectedAmount: v ?? 0, actualAmount: null })}
-        style={{ color: e.kind === "deposit" ? "var(--positive)" : "var(--text)" }}
-      />
+    <td style={{ ...tdStyle, width: 140 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 2 }}>
+        {money}
+        <span style={{ width: 18, flexShrink: 0, display: "inline-flex", justifyContent: "center" }}>
+          {copyable && <CopyButton text={plainAmountText(amount)} ariaLabel={`Copy the withdrawal amount of ${e.name}`} />}
+        </span>
+      </div>
     </td>
   );
 }

@@ -72,9 +72,9 @@ export async function PATCH(request: Request, ctx: RouteContext<"/api/cashflow/e
     }
     if (postedDate.value === null) delete entry.postedDate;
     else if (postedDate.value !== undefined) entry.postedDate = postedDate.value;
-    // A date set by hand is the date: the nominal due date follows it, so the
-    // row stops showing "due <old date>". (dueDate is display only — the
-    // occurrence key that stops duplicates is stored separately.)
+    // A date set by hand is the date: the nominal due date follows it.
+    // (dueDate isn't shown, and the occurrence key that stops duplicates is
+    // stored separately.)
     const typedDate = postedDate.value ?? postingDate;
     if (typedDate) entry.dueDate = typedDate;
 

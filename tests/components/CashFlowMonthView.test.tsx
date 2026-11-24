@@ -2,6 +2,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { CashFlowMonthView } from "@/components/cashflow/CashFlowMonthView";
+import { plainAmountText } from "@/components/cashflow/shared";
 import { ToastProvider } from "@/components/ToastContext";
 import { addCashFlowEntry, startCashFlowMonth, updateCashFlowEntry, updateCashFlowMonth } from "@/lib/api";
 import type { AppState, BankAccount, CashFlowEntry, CashFlowMonth } from "@/lib/types";
@@ -161,10 +162,10 @@ describe("CashFlowMonthView", () => {
     await waitFor(() => expect(updateCashFlowMonth).toHaveBeenCalledWith("m_oct", { openingSource: "carried" }));
   });
 
-  it("shows the nominal due date when a payment rolled", () => {
+  it("shows only the projected date when a payment rolled, never a due date", () => {
     const { month, entries } = october();
     renderView(makeAppState({ bankAccounts: [account], cashFlowMonths: [month], cashFlowEntries: entries }));
-    expect(screen.getByText("due Sep 30")).toBeInTheDocument();
+    expect(screen.queryByText(/^due /)).not.toBeInTheDocument();
   });
 
   it("records a checkpoint balance", async () => {
@@ -265,6 +266,36 @@ describe("CashFlowMonthView", () => {
     await waitFor(() => expect(addCashFlowEntry).toHaveBeenCalledWith({ monthId: "m_oct", name: "Refund", kind: "deposit", postingDate: "2026-10-31", expectedAmount: 40 }));
   });
 
+  it("copies a withdrawal as a bare number for the banking app", async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, "clipboard", { value: { writeText }, configurable: true });
+    const { month, entries } = october();
+    const big = entries.map((x) => (x.name === "Hydro" ? { ...x, expectedAmount: 9999.9 } : x));
+    renderView(makeAppState({ bankAccounts: [account], cashFlowMonths: [month], cashFlowEntries: big }));
+    fireEvent.click(screen.getByRole("button", { name: "Copy the withdrawal amount of Hydro" }));
+    await waitFor(() => expect(writeText).toHaveBeenCalledWith("9999.90"));
+    // An actual amount is what's copied once there is one.
+    fireEvent.click(screen.getByRole("button", { name: "Copy the withdrawal amount of CIBC" }));
+    await waitFor(() => expect(writeText).toHaveBeenLastCalledWith("222.47"));
+    // Each icon turns into a check for a moment after its copy.
+    expect(await screen.findAllByTitle("Copied")).toHaveLength(2);
+  });
+
+  it("formats a copied amount with digits and a decimal point only", () => {
+    expect(plainAmountText(9999)).toBe("9999.00");
+    expect(plainAmountText(1234567.5)).toBe("1234567.50");
+    expect(plainAmountText(0.1 + 0.2)).toBe("0.30");
+  });
+
+  it("has no copy icon on a deposit or a zero withdrawal", () => {
+    const { month, entries } = october();
+    const zero = entries.map((x) => (x.name === "Hydro" ? { ...x, expectedAmount: 0 } : x));
+    renderView(makeAppState({ bankAccounts: [account], cashFlowMonths: [month], cashFlowEntries: zero }));
+    expect(screen.queryByRole("button", { name: /^Copy .* of SR pay/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Copy the withdrawal amount of Hydro" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Copy the withdrawal amount of Rent" })).toBeInTheDocument();
+  });
+
   it("draws the empty Confirmation # field so it can be seen", () => {
     const { month, entries } = october();
     renderView(makeAppState({ bankAccounts: [account], cashFlowMonths: [month], cashFlowEntries: entries }));
@@ -334,6 +365,45 @@ describe("CashFlowMonthView", () => {
     fireEvent.paste(screen.getByLabelText("Confirmation number of Hydro"), { clipboardData: { getData: () => " 136266 " } });
     await waitFor(() => expect(updateCashFlowEntry).toHaveBeenCalledWith("Hydro", { settlement: "manual", confirmationCode: "136266" }));
     expect(updateCashFlowEntry).toHaveBeenCalledTimes(1);
+  });
+
+  it("doesn't save a pasted confirmation number twice when Tab or Enter follows", async () => {
+    const { month, entries } = october();
+    renderView(makeAppState({ bankAccounts: [account], cashFlowMonths: [month], cashFlowEntries: entries }));
+    const field = screen.getByLabelText("Confirmation number of Hydro");
+    fireEvent.paste(field, { clipboardData: { getData: () => "136266" } });
+    fireEvent.keyDown(field, { key: "Enter" });
+    fireEvent.blur(field);
+    await waitFor(() => expect(updateCashFlowEntry).toHaveBeenCalledTimes(1));
+    await Promise.resolve();
+    expect(updateCashFlowEntry).toHaveBeenCalledTimes(1);
+  });
+
+  it("tries a pasted confirmation number again on Tab when its save failed", async () => {
+    vi.mocked(updateCashFlowEntry).mockRejectedValueOnce(new Error("Request failed: 500"));
+    const { month, entries } = october();
+    renderView(makeAppState({ bankAccounts: [account], cashFlowMonths: [month], cashFlowEntries: entries }));
+    const field = screen.getByLabelText("Confirmation number of Hydro") as HTMLInputElement;
+    fireEvent.paste(field, { clipboardData: { getData: () => "136266" } });
+    // The failure is reported, and the number stays in the field.
+    expect(await screen.findByText("Request failed: 500")).toBeInTheDocument();
+    expect(field.value).toBe("136266");
+    fireEvent.blur(field);
+    await waitFor(() => expect(updateCashFlowEntry).toHaveBeenCalledTimes(2));
+    expect(updateCashFlowEntry).toHaveBeenLastCalledWith("Hydro", { settlement: "manual", confirmationCode: "136266" });
+  });
+
+  it("tries again on Enter or a second paste after a failed save", async () => {
+    vi.mocked(updateCashFlowEntry).mockRejectedValueOnce(new Error("Request failed: 500")).mockRejectedValueOnce(new Error("Request failed: 500"));
+    const { month, entries } = october();
+    renderView(makeAppState({ bankAccounts: [account], cashFlowMonths: [month], cashFlowEntries: entries }));
+    const field = screen.getByLabelText("Confirmation number of Hydro");
+    fireEvent.paste(field, { clipboardData: { getData: () => "136266" } });
+    await waitFor(() => expect(screen.getAllByText("Request failed: 500")).toHaveLength(1));
+    fireEvent.keyDown(field, { key: "Enter" });
+    await waitFor(() => expect(screen.getAllByText("Request failed: 500")).toHaveLength(2));
+    fireEvent.paste(field, { clipboardData: { getData: () => "136266" } });
+    await waitFor(() => expect(updateCashFlowEntry).toHaveBeenCalledTimes(3));
   });
 
   it("shows a recorded confirmation number as text, with when it was entered", () => {

@@ -7,6 +7,7 @@ import { fmtCurrency } from "@/lib/format";
 import { bcTodayIso, fmtBcDateTime } from "@/lib/bcTime";
 import { isValidIsoDate } from "@/lib/request";
 import { PrimaryButton, SecondaryButton } from "../ui";
+import { useToast } from "../ToastContext";
 
 // Today in BC, whatever time zone the device is set to (see bcTime.ts).
 export function todayIso(): string {
@@ -225,6 +226,58 @@ export function TextCell({
   );
 }
 
+// An amount as a banking app's payment field wants it: digits and a decimal
+// point only — "9999.99", never "$9,999.99".
+export function plainAmountText(amount: number): string {
+  return (Math.round(Math.abs(amount) * 100) / 100).toFixed(2);
+}
+
+// A small copy-to-clipboard icon: copies `text`, then shows a check for a
+// moment. Kept out of the Tab order, so tabbing through a row's fields
+// doesn't stop on it.
+export function CopyButton({ text, ariaLabel }: { text: string; ariaLabel: string }) {
+  const pushToast = useToast();
+  const [copied, setCopied] = useState(false);
+  const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => () => {
+    if (timer.current) clearTimeout(timer.current);
+  }, []);
+
+  async function copy() {
+    try {
+      await navigator.clipboard.writeText(text);
+    } catch {
+      pushToast("Couldn't copy to the clipboard");
+      return;
+    }
+    setCopied(true);
+    if (timer.current) clearTimeout(timer.current);
+    timer.current = setTimeout(() => setCopied(false), 1500);
+  }
+
+  return (
+    <button
+      type="button"
+      tabIndex={-1}
+      aria-label={ariaLabel}
+      title={copied ? "Copied" : `Copy ${text}`}
+      onClick={copy}
+      style={{ border: "none", background: "none", padding: 2, lineHeight: 0, cursor: "pointer", color: copied ? "var(--positive)" : "var(--muted)", flexShrink: 0 }}
+    >
+      {copied ? (
+        <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+          <path d="M3 8.5l3.2 3L13 4.5" />
+        </svg>
+      ) : (
+        <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinejoin="round" aria-hidden="true">
+          <rect x="5.5" y="5.5" width="8" height="8.5" rx="1.5" />
+          <path d="M10.5 5.5V3.5A1.5 1.5 0 0 0 9 2H4A1.5 1.5 0 0 0 2.5 3.5V10A1.5 1.5 0 0 0 4 11.5h1.5" />
+        </svg>
+      )}
+    </button>
+  );
+}
+
 // An in-app yes/no dialog (not the browser's confirm()). Escape or a click
 // outside cancels.
 export function ConfirmDialog({
@@ -313,7 +366,8 @@ export function ConfirmationCell({
           autoFocus={editing}
           onDone={(text) => {
             if (editing) finishEdit(text);
-            else if (text) onCommit(text).catch(() => {});
+            // Handed back so a failed save lets the field try again.
+            else if (text) return onCommit(text);
           }}
         />
         {pending !== null && (
@@ -374,15 +428,33 @@ export function ConfirmationCell({
   );
 }
 
-function CodeInput({ ariaLabel, initial, autoFocus, onDone }: { ariaLabel: string; initial: string; autoFocus: boolean; onDone: (text: string | null) => void }) {
+function CodeInput({
+  ariaLabel,
+  initial,
+  autoFocus,
+  onDone,
+}: {
+  ariaLabel: string;
+  initial: string;
+  autoFocus: boolean;
+  // A rejected promise means the save failed: the field stays as typed and
+  // the next Enter, Tab or paste tries again.
+  onDone: (text: string | null) => void | Promise<void>;
+}) {
   const [draft, setDraft] = useState(initial);
-  // Set once the field has been answered (Enter, paste, Escape), so the blur
-  // that follows doesn't answer it a second time; typing again re-arms it.
-  const done = useRef(false);
+  // What the field was last answered with (Enter, paste, Escape, leaving it),
+  // so the blur that follows a paste or Enter doesn't send the same text a
+  // second time. Typing clears it, and so does a failed save — a bare "done"
+  // flag used to stay set after a failure, so the pasted number sat in the
+  // field unsaved and Tab, Enter and re-pasting all silently did nothing.
+  const answered = useRef<{ text: string | null } | null>(null);
   const finish = (text: string | null) => {
-    if (done.current) return;
-    done.current = true;
-    onDone(text);
+    if (answered.current && answered.current.text === text) return;
+    const answer = { text };
+    answered.current = answer;
+    Promise.resolve(onDone(text)).catch(() => {
+      if (answered.current === answer) answered.current = null;
+    });
   };
   return (
     <input
@@ -393,7 +465,7 @@ function CodeInput({ ariaLabel, initial, autoFocus, onDone }: { ariaLabel: strin
       placeholder="—"
       title="Paste the confirmation number — or type AD if it's automatic, X if someone else completes it"
       onChange={(e) => {
-        done.current = false;
+        answered.current = null;
         setDraft(e.target.value);
       }}
       onPaste={(e) => {
