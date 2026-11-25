@@ -177,9 +177,11 @@ Mappings are shared by both sides. The design is in
   Friday, second Friday, and month end, each opening with a Weekly Spend of
   the daily rate × its days, then its withdrawals (−) and deposits (+) with a
   status, confirmation number, and running balance, then the checkpoint where
-  the real balance is entered. A status is Projected, Actual, or Skipped —
-  just an indicator of whether the amount has been confirmed: a past month is
-  all Actual, the current one a mix. Recording the end-of-month balance
+  the real balance is entered. A status is Projected, Actual, Skipped, or
+  Excluded — just an indicator of whether the amount has been confirmed: a
+  past month is all Actual, the current one a mix. Skipped and Excluded
+  entries don't affect the balance; Excluded is for a bill paid from another
+  account, tracked here at full strength rather than greyed out like Skipped. Recording the end-of-month balance
   closes the month. Payments land on their business-day posting date
   (weekends and the account's bank holidays).
 - **Bank Transactions / Import Bank CSV** — the chequing export (Date,

@@ -209,6 +209,19 @@ describe("summarizeMonth", () => {
     ]);
   });
 
+  it("lists an Excluded entry (paid from another account) without counting it, like Skipped", () => {
+    const { m, entries } = october();
+    const before = summarizeMonth(m, entries);
+    const excluded = entry({ name: "Visa (paid from savings)", expectedAmount: 500, postingDate: "2026-10-23", status: "excluded" });
+    const after = summarizeMonth(m, [...entries, excluded]);
+    expect(after.periods.map((p) => [p.deposits, p.bills, p.projected])).toEqual(before.periods.map((p) => [p.deposits, p.bills, p.projected]));
+    expect(after.closingBalance).toBe(before.closingBalance);
+    expect(after.lowPoint).toEqual(before.lowPoint);
+    const row = after.periods[2].rows.find((r) => r.entry === excluded)!;
+    expect(row.counted).toBe(false);
+    expect(row.amount).toBe(500);
+  });
+
   it("works out the variance and implied spend at a recorded checkpoint", () => {
     const { m, entries } = october();
     const [p1, p2] = summarizeMonth(m, entries).periods;

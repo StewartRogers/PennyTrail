@@ -30,7 +30,7 @@ export async function PATCH(request: Request, ctx: RouteContext<"/api/cashflow/e
   const confirmationCode = readOptionalText(body.confirmationCode, 100);
   const notes = readOptionalText(body.notes, 1000);
   if (kind === null) return NextResponse.json({ error: "kind must be bill or deposit" }, { status: 400 });
-  if (status === null) return NextResponse.json({ error: "status must be projected, actual, or skipped" }, { status: 400 });
+  if (status === null) return NextResponse.json({ error: "status must be projected, actual, skipped, or excluded" }, { status: 400 });
   if (settlement === null) return NextResponse.json({ error: "settlement must be manual, auto, or external" }, { status: 400 });
   if (expectedAmount === null || !actualAmount.ok) return NextResponse.json({ error: "Amounts must be non-negative numbers" }, { status: 400 });
   if (postingDate === null || !postedDate.ok || !scheduledDate.ok) return NextResponse.json({ error: "Dates must be valid (yyyy-mm-dd)" }, { status: 400 });
@@ -87,7 +87,8 @@ export async function PATCH(request: Request, ctx: RouteContext<"/api/cashflow/e
       entry.postedDate = entry.postedDate ?? entry.postingDate;
     } else if (status) {
       // Set back to Projected or Skipped by hand: it hasn't happened, so it
-      // has no posted date and no bank line settling it.
+      // has no posted date and no bank line settling it. Excluded is the
+      // same here — paid from another account, so no line in this one.
       delete entry.postedDate;
       if (entry.bankTransactionId) {
         detachEntries(state, new Set([entry.id]));

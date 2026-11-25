@@ -467,6 +467,23 @@ describe("CashFlowMonthView", () => {
     expect(row("SR pay").style.background).toBe(""); // automatic
   });
 
+  it("shows an Excluded row at full strength, unlike Skipped, and leaves the balance alone", () => {
+    const { month, entries } = october();
+    const extra = [
+      { ...entries[5], id: "Visa", name: "Visa", expectedAmount: 400, postingDate: "2026-10-05", dueDate: "2026-10-05", status: "excluded" as const },
+      { ...entries[5], id: "Porter", name: "Porter", expectedAmount: 300, postingDate: "2026-10-05", dueDate: "2026-10-05", status: "skipped" as const },
+    ];
+    renderView(makeAppState({ bankAccounts: [account], cashFlowMonths: [month], cashFlowEntries: [...entries, ...extra] }));
+    const row = (name: string) => screen.getByLabelText(`Name of ${name}`).closest("tr")!;
+    expect(row("Visa").style.opacity).toBe("1");
+    expect(row("Porter").style.opacity).toBe("0.55");
+    expect(row("Visa").style.background).toBe(""); // no confirmation number asked for
+    expect((screen.getByLabelText("Status of Visa") as HTMLSelectElement).value).toBe("excluded");
+    expect(within(screen.getByLabelText("Status of Visa")).getByRole("option", { name: "Excluded" })).toBeInTheDocument();
+    // P2's projection is unchanged by either: still $10,016.79.
+    expect((screen.getByLabelText("Actual balance at 2026-10-09") as HTMLInputElement).placeholder).toBe("$10,016.79");
+  });
+
   it("shades a checkpoint yellow while projected and green once the actual is in", () => {
     const { month, entries } = october();
     renderView(makeAppState({ bankAccounts: [account], cashFlowMonths: [month], cashFlowEntries: entries }));
@@ -475,12 +492,12 @@ describe("CashFlowMonthView", () => {
     expect(row("2026-10-09").style.background).toBe("var(--row-projected)");
   });
 
-  it("offers just Projected, Actual, and Skipped, even for an entry past its date", () => {
+  it("offers just Projected, Actual, Skipped, and Excluded, even for an entry past its date", () => {
     const { month, entries } = october();
     entries.push({ id: "late", monthId: "m_oct", itemId: null, name: "Late bill", kind: "bill", dueDate: "2026-10-12", postingDate: "2026-10-12", expectedAmount: 10, status: "projected" });
     renderView(makeAppState({ bankAccounts: [account], cashFlowMonths: [month], cashFlowEntries: entries }));
     const status = screen.getByLabelText("Status of Late bill") as HTMLSelectElement;
-    expect(Array.from(status.options).map((o) => o.textContent)).toEqual(["Projected", "Actual", "Skipped"]);
+    expect(Array.from(status.options).map((o) => o.textContent)).toEqual(["Projected", "Actual", "Skipped", "Excluded"]);
     expect(status.style.color).toBe("var(--muted)");
     expect((screen.getByLabelText("Date of Late bill") as HTMLInputElement).style.color).toBe("var(--text)");
   });

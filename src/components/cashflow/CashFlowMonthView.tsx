@@ -419,12 +419,14 @@ function EntryRowView({ row, run }: { row: EntryRow; run: Run }) {
   const e = row.entry;
   const shownDate = entryDate(e);
   const update = (patch: Parameters<typeof updateCashFlowEntry>[1], success?: string) => run(() => updateCashFlowEntry(e.id, patch), success);
-  const muted = e.status === "actual" || e.status === "skipped";
+  // Excluded rows read like Actual ones (it was paid, just from another
+  // account) — not greyed out like Skipped, though neither touches the balance.
+  const muted = e.status === "actual" || e.status === "skipped" || e.status === "excluded";
   const settlement = e.settlement ?? "manual";
   // Automatic (AD) and someone-else (X) items need no confirmation number,
   // so the Confirmation # cell shows the code instead.
   const shownCode = settlement === "auto" ? "AD" : settlement === "external" ? "X" : e.confirmationCode;
-  const missingConfirmation = settlement === "manual" && !e.confirmationCode && e.status !== "skipped";
+  const missingConfirmation = settlement === "manual" && !e.confirmationCode && e.status !== "skipped" && e.status !== "excluded";
 
   function commitCode(text: string) {
     const code = text.trim().toUpperCase();

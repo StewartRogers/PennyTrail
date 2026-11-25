@@ -119,8 +119,11 @@ This block is written and re-added by `next dev` — verify at `node_modules/nex
   route that changes a month must call `refreshOpeningsFrom` (see
   `src/lib/cashflowState.ts`). Deleting a month needs `{ confirm: true }`;
   wiping bank lines needs `{ all: true }`. Entry statuses are `projected`,
-  `actual`, and `skipped` — indicators of whether an amount has been
-  confirmed, nothing more; `normalizeState` maps the retired `planned` /
+  `actual`, `skipped`, and `excluded` — indicators of whether an amount has
+  been confirmed, nothing more. `skipped` and `excluded` (a bill paid from
+  another account) never touch the balance — check `countsTowardBalance` in
+  `src/lib/cashflow.ts` rather than testing for one status; only `skipped`
+  rows are greyed out; `normalizeState` maps the retired `planned` /
   `scheduled` / `posted` on read, so don't reintroduce them. Only the user
   changes a status: nothing (bank matching, unmatching, editing a date or
   amount) may set one as a side effect.

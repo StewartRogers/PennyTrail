@@ -52,6 +52,16 @@ describe("PATCH /api/cashflow/entries/[id]", () => {
     for (const status of ["planned", "scheduled", "posted"]) expect((await patchEntry(e.id, { status })).status).toBe(400);
   });
 
+  it("accepts Excluded, which has no posted date", async () => {
+    const { entry: e } = await entry();
+    await patchEntry(e.id, { status: "actual", postedDate: "2026-10-10" });
+    const { status, body } = await patchEntry(e.id, { status: "excluded" });
+    expect(status).toBe(200);
+    expect(body.status).toBe("excluded");
+    expect(body.postedDate).toBeUndefined();
+    expect((await readStore()).cashFlowEntries[0].status).toBe("excluded");
+  });
+
   it("posts on the expected date by default, or on the date given", async () => {
     const { entry: e } = await entry();
     expect((await patchEntry(e.id, { status: "actual" })).body.postedDate).toBe("2026-10-09");

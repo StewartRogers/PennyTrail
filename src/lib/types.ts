@@ -222,9 +222,12 @@ export interface CashFlowMonth {
 
 // Indicators for confirming an entry's real amount, nothing more: Projected
 // until the deposit or withdrawal is confirmed, then Actual; Skipped entries
-// don't count. Stores written before the rename ("planned", "scheduled",
-// "posted") are mapped on read — see normalizeState.
-export type EntryStatus = "projected" | "actual" | "skipped";
+// don't count. Excluded entries don't count either — a bill paid from another
+// account, tracked here but never touching this account's balance — yet they
+// are shown at full strength, not greyed out like Skipped. Stores written
+// before the rename ("planned", "scheduled", "posted") are mapped on read —
+// see normalizeState.
+export type EntryStatus = "projected" | "actual" | "skipped" | "excluded";
 
 export interface CashFlowEntry {
   id: string;

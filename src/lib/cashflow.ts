@@ -89,6 +89,12 @@ export function entryAmount(entry: Pick<CashFlowEntry, "actualAmount" | "expecte
   return entry.actualAmount ?? entry.expectedAmount;
 }
 
+// Skipped (didn't happen) and Excluded (paid from another account) entries
+// are listed but leave this account's balance alone.
+export function countsTowardBalance(entry: Pick<CashFlowEntry, "status">): boolean {
+  return entry.status !== "skipped" && entry.status !== "excluded";
+}
+
 // Not yet confirmed: still a projection.
 export function isOutstanding(entry: Pick<CashFlowEntry, "status">): boolean {
   return entry.status === "projected";
@@ -123,7 +129,7 @@ function signedCents(entry: CashFlowEntry): number {
 export interface EntryRow {
   entry: CashFlowEntry;
   amount: number;
-  counted: boolean; // false for skipped entries
+  counted: boolean; // false for skipped and excluded entries
   balanceAfter: number;
 }
 
@@ -217,7 +223,7 @@ export function summarizeMonth(month: CashFlowMonth, monthEntries: CashFlowEntry
     let bills = 0;
     const rows: EntryRow[] = [];
     for (const entry of buckets[index]) {
-      const counted = entry.status !== "skipped";
+      const counted = countsTowardBalance(entry);
       if (counted) {
         const signed = signedCents(entry);
         balance += signed;
@@ -237,7 +243,7 @@ export function summarizeMonth(month: CashFlowMonth, monthEntries: CashFlowEntry
       consider(running, span.start);
       const late: CashFlowEntry[] = [];
       for (const entry of buckets[index]) {
-        if (entry.status === "skipped") continue;
+        if (!countsTowardBalance(entry)) continue;
         if (entry.dateUncertain && entry.kind === "deposit") {
           late.push(entry);
           continue;

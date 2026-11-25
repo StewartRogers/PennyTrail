@@ -70,6 +70,7 @@ export const STATUS_LABELS: Record<EntryStatus, string> = {
   projected: "Projected",
   actual: "Actual",
   skipped: "Skipped",
+  excluded: "Excluded",
 };
 
 // Just the status itself — whether a Projected entry is past its date isn't shown.
