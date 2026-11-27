@@ -151,38 +151,10 @@ describe("CashFlowMonthView", () => {
     expect(screen.getByText("recorded")).toBeInTheDocument();
   });
 
-  it("charts deposits first, then withdrawals with Weekly Spend as one column", () => {
+  it("leaves the chart to Month Chart", () => {
     const { month, entries } = october();
     renderView(makeAppState({ bankAccounts: [account], cashFlowMonths: [month], cashFlowEntries: entries }));
-    const chart = screen.getByRole("region", { name: "Deposits and withdrawals" });
-    const columns = Array.from(chart.querySelectorAll("[data-column]")).map((el) => el.getAttribute("data-column"));
-    // Weekly Spend: P1 implies 128.02 (11,178.03 projected, 11,150.01 recorded); P2 + P3 estimate 1,450.
-    expect(columns).toEqual(["SR pay", "Weekly Spend", "Rent", "Simplii", "CIBC", "Hydro", "Insurance"]);
-    expect(within(chart).getByText("$3,000.50")).toBeInTheDocument();
-    // Withdrawals: 1,578.02 + 1,500 + 754.30 + 222.47 + 188.77 + 28.92.
-    expect(within(chart).getByText("$4,272.48")).toBeInTheDocument();
-  });
-
-  it("shows a column's split on hover", () => {
-    const { month, entries } = october();
-    renderView(makeAppState({ bankAccounts: [account], cashFlowMonths: [month], cashFlowEntries: entries }));
-    const chart = screen.getByRole("region", { name: "Deposits and withdrawals" });
-    fireEvent.mouseEnter(chart.querySelector('[data-column="Weekly Spend"]')!);
-    const tip = screen.getByRole("tooltip");
-    expect(tip).toHaveTextContent("−$1,578.02");
-    expect(tip).toHaveTextContent("From recorded balances$128.02");
-    expect(tip).toHaveTextContent("Estimated$1,450.00");
-    expect(tip).toHaveTextContent("3 periods");
-  });
-
-  it("hides and shows the chart", () => {
-    const { month, entries } = october();
-    renderView(makeAppState({ bankAccounts: [account], cashFlowMonths: [month], cashFlowEntries: entries }));
-    const chart = screen.getByRole("region", { name: "Deposits and withdrawals" });
-    fireEvent.click(within(chart).getByRole("button", { name: "Hide chart" }));
-    expect(chart.querySelector("[data-column]")).toBeNull();
-    fireEvent.click(within(chart).getByRole("button", { name: "Show chart" }));
-    expect(chart.querySelector("[data-column]")).not.toBeNull();
+    expect(screen.queryByRole("region", { name: "Deposits and withdrawals" })).not.toBeInTheDocument();
   });
 
   it("edits the first month's opening balance and the daily spend rate", async () => {

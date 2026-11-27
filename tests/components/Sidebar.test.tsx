@@ -20,7 +20,7 @@ describe("Sidebar", () => {
 
   it("shows the Cash Flow screens and the shared ones", () => {
     renderSidebar("cashflow");
-    for (const label of ["This Month", "Bank Transactions", "Import Bank CSV", "Recurring Items", "Accounts", "Categories", "Vendor Mappings"]) {
+    for (const label of ["This Month", "Month Chart", "Bank Transactions", "Import Bank CSV", "Recurring Items", "Accounts", "Categories", "Vendor Mappings"]) {
       expect(screen.getByRole("button", { name: label })).toBeInTheDocument();
     }
     for (const removed of ["Upcoming", "Spending", "History", "Dashboard"]) {

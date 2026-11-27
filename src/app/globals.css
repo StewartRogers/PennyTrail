@@ -63,3 +63,42 @@ button {
 .inline-editable:focus {
   border-color: var(--border) !important;
 }
+
+/* Printing (Month Chart is made for it): just the page content — no
+   sidebar, pickers, or buttons — landscape, with the chart scaled to the
+   paper's width and panels kept whole across page breaks. */
+@page cf-chart {
+  size: landscape;
+  margin: 12mm;
+}
+
+@media print {
+  .no-print {
+    display: none !important;
+  }
+  html,
+  body {
+    background: #fff;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+  .app-main {
+    padding: 0 !important;
+  }
+  .cf-chart-page {
+    page: cf-chart;
+  }
+  .cf-print-block {
+    break-inside: avoid;
+  }
+  .cf-flow-plot {
+    overflow: visible !important;
+  }
+  .cf-flow-inner {
+    width: auto !important;
+  }
+  .cf-flow-inner svg {
+    width: 100%;
+    height: auto;
+  }
+}

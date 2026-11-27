@@ -14,12 +14,10 @@ const WITHDRAWAL = "var(--accent)";
 const PROJECTED_OPACITY = 0.38;
 
 const MARGIN = { left: 56, right: 12, top: 26, bottom: 96 };
-const PLOT_HEIGHT = 190;
 const GROUP_GAP = 22;
 const MIN_STEP = 30;
 const MAX_STEP = 72;
 const LABEL_CHARS = 22;
-const HIDDEN_KEY = "pennytrail.cf.flowChartHidden";
 
 function niceMax(value: number): number {
   if (value <= 0) return 100;
@@ -42,75 +40,89 @@ function truncate(label: string): string {
   return label.length > LABEL_CHARS ? `${label.slice(0, LABEL_CHARS - 1)}…` : label;
 }
 
-function readHidden(): boolean {
-  try {
-    return window.localStorage.getItem(HIDDEN_KEY) === "1";
-  } catch {
-    return false;
-  }
-}
-
-function writeHidden(hidden: boolean) {
-  try {
-    if (hidden) window.localStorage.setItem(HIDDEN_KEY, "1");
-    else window.localStorage.removeItem(HIDDEN_KEY);
-  } catch {
-    // Storage blocked: the toggle still works for this visit.
-  }
-}
-
-export function MonthFlowChart({ flow }: { flow: MonthFlow }) {
-  // The month view only renders after the client has fetched the state, so
-  // reading storage in the initializer can't cause a hydration mismatch.
-  const [hidden, setHidden] = useState(readHidden);
-  const toggle = () => {
-    writeHidden(!hidden);
-    setHidden(!hidden);
-  };
-
+export function MonthFlowChart({ flow, plotHeight = 260 }: { flow: MonthFlow; plotHeight?: number }) {
   return (
-    <section aria-label="Deposits and withdrawals" style={{ background: "var(--panel)", border: "1px solid var(--border)", borderRadius: 12, marginBottom: 14 }}>
-      <div style={{ display: "flex", alignItems: "center", gap: "6px 18px", flexWrap: "wrap", padding: "12px 16px 8px" }}>
-        <div style={{ fontSize: 14, fontWeight: 600 }}>Deposits &amp; withdrawals</div>
-        <LegendItem color={DEPOSIT} label="Deposits" value={flow.deposits} />
-        <LegendItem color={WITHDRAWAL} label="Withdrawals" value={flow.withdrawals} />
+    <section aria-label="Deposits and withdrawals" className="cf-print-block" style={{ background: "var(--panel)", border: "1px solid var(--border)", borderRadius: 12, marginBottom: 16 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: "6px 18px", flexWrap: "wrap", padding: "16px 20px 8px" }}>
+        <div style={{ fontSize: 15, fontWeight: 600 }}>Deposits &amp; withdrawals</div>
+        <LegendItem color={DEPOSIT} label="Deposits" />
+        <LegendItem color={WITHDRAWAL} label="Withdrawals" />
         <span style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 12, color: "var(--muted)" }}>
           <svg width={12} height={12} aria-hidden>
             <rect width={12} height={12} rx={2} fill="var(--muted)" fillOpacity={PROJECTED_OPACITY} />
           </svg>
           Lighter = still projected
         </span>
-        <button
-          onClick={toggle}
-          aria-expanded={!hidden}
-          style={{ marginLeft: "auto", border: "none", background: "none", color: "var(--accent)", padding: 0, fontSize: 12.5, fontWeight: 600 }}
-        >
-          {hidden ? "Show chart" : "Hide chart"}
-        </button>
       </div>
-      {!hidden &&
-        (flow.columns.length === 0 ? (
-          <div style={{ padding: "4px 16px 16px", fontSize: 13, color: "var(--muted)" }}>Nothing in or out this month yet.</div>
-        ) : (
-          <Plot columns={flow.columns} />
-        ))}
+      {flow.columns.length === 0 ? (
+        <div style={{ padding: "4px 20px 18px", fontSize: 13, color: "var(--muted)" }}>Nothing in or out this month yet.</div>
+      ) : (
+        <Plot columns={flow.columns} plotHeight={plotHeight} />
+      )}
     </section>
   );
 }
 
-function LegendItem({ color, label, value }: { color: string; label: string; value: number }) {
+// The columns as a list with their amounts — the chart's table view, and
+// what carries the numbers on paper, where there's no hover.
+export function FlowList({ title, columns, total }: { title: string; columns: FlowColumn[]; total: number }) {
+  const color = title === "Deposits" ? DEPOSIT : WITHDRAWAL;
+  return (
+    <section aria-label={title} className="cf-print-block" style={{ flex: 1, minWidth: 300, background: "var(--panel)", border: "1px solid var(--border)", borderRadius: 12, padding: "16px 20px" }}>
+      <div style={{ fontSize: 15, fontWeight: 600, marginBottom: 8 }}>{title}</div>
+      {columns.length === 0 ? (
+        <div style={{ fontSize: 13, color: "var(--muted)" }}>None this month.</div>
+      ) : (
+        <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+          <tbody>
+            {columns.map((c) => (
+              <tr key={c.key}>
+                <td style={{ padding: "5px 0", borderBottom: "1px solid var(--border)" }}>
+                  <span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
+                    <svg width={8} height={8} aria-hidden>
+                      <rect width={8} height={8} rx={2} fill={color} fillOpacity={c.confirmed > 0 ? 1 : PROJECTED_OPACITY} />
+                    </svg>
+                    {c.label}
+                    {c.count > 1 && !c.isSpend && <span style={{ fontSize: 11.5, color: "var(--muted)" }}>×{c.count}</span>}
+                  </span>
+                </td>
+                <td style={{ padding: "5px 0 5px 12px", borderBottom: "1px solid var(--border)", fontSize: 11.5, color: "var(--muted)", textAlign: "right", whiteSpace: "nowrap" }}>
+                  {projectedNote(c)}
+                </td>
+                <td style={{ padding: "5px 0 5px 12px", borderBottom: "1px solid var(--border)", fontFamily: "var(--mono)", textAlign: "right", whiteSpace: "nowrap" }}>
+                  {fmtCurrency(c.total)}
+                </td>
+              </tr>
+            ))}
+            <tr>
+              <td colSpan={2} style={{ padding: "8px 0 0", fontWeight: 600 }}>Total</td>
+              <td style={{ padding: "8px 0 0 12px", fontFamily: "var(--mono)", fontWeight: 600, textAlign: "right", whiteSpace: "nowrap" }}>{fmtCurrency(total)}</td>
+            </tr>
+          </tbody>
+        </table>
+      )}
+    </section>
+  );
+}
+
+function projectedNote(c: FlowColumn): string {
+  if (c.projected === 0) return "";
+  const word = c.isSpend ? "estimated" : "projected";
+  return c.confirmed === 0 ? word : `incl. ${fmtCurrency(c.projected)} ${word}`;
+}
+
+function LegendItem({ color, label }: { color: string; label: string }) {
   return (
     <span style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 12.5 }}>
       <svg width={12} height={12} aria-hidden>
         <rect width={12} height={12} rx={2} fill={color} />
       </svg>
       <span style={{ color: "var(--muted)" }}>{label}</span>
-      <b style={{ fontFamily: "var(--mono)", fontWeight: 600 }}>{fmtCurrency(value)}</b>
     </span>
   );
 }
 
-function Plot({ columns }: { columns: FlowColumn[] }) {
+function Plot({ columns, plotHeight }: { columns: FlowColumn[]; plotHeight: number }) {
   const wrapRef = useRef<HTMLDivElement>(null);
   const [available, setAvailable] = useState(800);
   const [active, setActive] = useState<number | null>(null);
@@ -132,10 +144,10 @@ function Plot({ columns }: { columns: FlowColumn[] }) {
   const step = Math.max(MIN_STEP, Math.min(MAX_STEP, (available - MARGIN.left - MARGIN.right - gaps) / columns.length));
   const barWidth = Math.min(40, Math.round(step * 0.62));
   const width = MARGIN.left + MARGIN.right + gaps + step * columns.length;
-  const height = MARGIN.top + PLOT_HEIGHT + MARGIN.bottom;
-  const baseline = MARGIN.top + PLOT_HEIGHT;
+  const height = MARGIN.top + plotHeight + MARGIN.bottom;
+  const baseline = MARGIN.top + plotHeight;
   const top = niceMax(Math.max(...columns.map((c) => c.total)));
-  const scale = (v: number) => (Math.max(0, v) / top) * PLOT_HEIGHT;
+  const scale = (v: number) => (Math.max(0, v) / top) * plotHeight;
   const ticks = [0, 0.25, 0.5, 0.75, 1].map((f) => f * top);
   const xOf = (i: number) => MARGIN.left + (hasBoth && i >= depositCount ? GROUP_GAP : 0) + i * step;
   const groupLabelY = MARGIN.top - 12;
@@ -152,8 +164,8 @@ function Plot({ columns }: { columns: FlowColumn[] }) {
   }
 
   return (
-    <div ref={wrapRef} style={{ overflowX: "auto", padding: "0 0 8px" }}>
-      <div style={{ position: "relative", width }} onMouseLeave={() => setActive(null)}>
+    <div ref={wrapRef} className="cf-flow-plot" style={{ overflowX: "auto", padding: "0 0 8px" }}>
+      <div className="cf-flow-inner" style={{ position: "relative", width }} onMouseLeave={() => setActive(null)}>
         <svg
           width={width}
           height={height}
@@ -231,7 +243,7 @@ function Plot({ columns }: { columns: FlowColumn[] }) {
                   x={xOf(i)}
                   y={MARGIN.top}
                   width={step}
-                  height={PLOT_HEIGHT + 40}
+                  height={plotHeight + 40}
                   fill="transparent"
                   tabIndex={0}
                   aria-label={`${c.label}: ${fmtCurrency(c.total)}`}
@@ -248,6 +260,7 @@ function Plot({ columns }: { columns: FlowColumn[] }) {
         {shown && (
           <div
             role="tooltip"
+            className="no-print"
             style={{
               position: "absolute",
               left: tipLeft,

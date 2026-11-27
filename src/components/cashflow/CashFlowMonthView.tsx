@@ -10,8 +10,7 @@ import {
   updateCashFlowEntry,
   updateCashFlowMonth,
 } from "@/lib/api";
-import { entriesForMonth, entryAmount, entryDate, monthFlow, summarizeMonth, type EntryRow, type PeriodSummary } from "@/lib/cashflow";
-import { MonthFlowChart } from "./MonthFlowChart";
+import { entriesForMonth, entryAmount, entryDate, summarizeMonth, type EntryRow, type MonthSummary, type PeriodSummary } from "@/lib/cashflow";
 import { suggestCheckpointBalances, type CheckpointSuggestion } from "@/lib/bankMatching";
 import { addMonths, monthEnd } from "@/lib/dates";
 import { isValidIsoDate } from "@/lib/request";
@@ -69,9 +68,35 @@ export function CashFlowMonthView({
   onMonthKeyChange: (key: string) => void;
 }) {
   const run = useRun(onReload);
-  const months = monthsForAccount(appState.cashFlowMonths, accountId);
-  const month = months.find((m) => m.month === monthKey);
+  const month = appState.cashFlowMonths.find((m) => m.accountId === accountId && m.month === monthKey);
 
+  return (
+    <div>
+      <MonthHeader appState={appState} accountId={accountId} monthKey={monthKey} onMonthKeyChange={onMonthKeyChange} />
+      {month ? (
+        <StartedMonth appState={appState} month={month} run={run} />
+      ) : (
+        <StartMonthPanel appState={appState} accountId={accountId} monthKey={monthKey} run={run} />
+      )}
+    </div>
+  );
+}
+
+// The month's name with ‹ › and a picker of started months (plus the one
+// after the latest). This Month and Month Chart share it, and the month
+// picked on one is the month shown on the other.
+export function MonthHeader({
+  appState,
+  accountId,
+  monthKey,
+  onMonthKeyChange,
+}: {
+  appState: AppState;
+  accountId: string;
+  monthKey: string;
+  onMonthKeyChange: (key: string) => void;
+}) {
+  const months = monthsForAccount(appState.cashFlowMonths, accountId);
   const pickerKeys = useMemo(() => {
     const keys = new Set(months.map((m) => m.month));
     keys.add(monthKey);
@@ -81,29 +106,35 @@ export function CashFlowMonthView({
   }, [months, monthKey]);
 
   return (
-    <div>
-      <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap", marginBottom: 18 }}>
-        <PageTitle>{longMonthLabel(monthKey)}</PageTitle>
-        <div style={{ display: "flex", gap: 6, marginLeft: "auto", alignItems: "center" }}>
-          <SmallButton onClick={() => onMonthKeyChange(addMonths(monthKey, -1))} title="Previous month">‹</SmallButton>
-          <select aria-label="Month" value={monthKey} onChange={(e) => onMonthKeyChange(e.target.value)} style={{ ...inputStyle, padding: "6px 8px" }}>
-            {pickerKeys.map((k) => (
-              <option key={k} value={k}>
-                {longMonthLabel(k)}
-                {months.some((m) => m.month === k) ? "" : " (not started)"}
-              </option>
-            ))}
-          </select>
-          <SmallButton onClick={() => onMonthKeyChange(addMonths(monthKey, 1))} title="Next month">›</SmallButton>
-        </div>
+    <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap", marginBottom: 18 }}>
+      <PageTitle>{longMonthLabel(monthKey)}</PageTitle>
+      <div className="no-print" style={{ display: "flex", gap: 6, marginLeft: "auto", alignItems: "center" }}>
+        <SmallButton onClick={() => onMonthKeyChange(addMonths(monthKey, -1))} title="Previous month">‹</SmallButton>
+        <select aria-label="Month" value={monthKey} onChange={(e) => onMonthKeyChange(e.target.value)} style={{ ...inputStyle, padding: "6px 8px" }}>
+          {pickerKeys.map((k) => (
+            <option key={k} value={k}>
+              {longMonthLabel(k)}
+              {months.some((m) => m.month === k) ? "" : " (not started)"}
+            </option>
+          ))}
+        </select>
+        <SmallButton onClick={() => onMonthKeyChange(addMonths(monthKey, 1))} title="Next month">›</SmallButton>
       </div>
-
-      {month ? (
-        <StartedMonth appState={appState} month={month} run={run} />
-      ) : (
-        <StartMonthPanel appState={appState} accountId={accountId} monthKey={monthKey} run={run} />
-      )}
     </div>
+  );
+}
+
+// The month's closing balance: the final checkpoint once recorded, the
+// projection until then.
+export function ClosingBalance({ summary }: { summary: MonthSummary }) {
+  return (
+    <span style={{ display: "inline-flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+      <span style={{ fontSize: 12.5, color: "var(--muted)" }}>Closing balance</span>
+      <span data-testid="closing-balance" style={{ fontFamily: "var(--mono)", fontWeight: 600, fontSize: 13.5, color: summary.closingBalance < 0 ? "var(--attention)" : undefined }}>
+        {fmtCurrency(summary.closingBalance)}
+      </span>
+      <span style={{ fontSize: 11.5, color: "var(--muted)" }}>{summary.closingIsActual ? "recorded" : "projected"}</span>
+    </span>
   );
 }
 
@@ -221,13 +252,7 @@ function StartedMonth({ appState, month, run }: { appState: AppState; month: Cas
             />
           )}
         </span>
-        <span style={{ display: "inline-flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-          <span style={settingLabel}>Closing balance</span>
-          <span data-testid="closing-balance" style={{ fontFamily: "var(--mono)", fontWeight: 600, fontSize: 13.5, color: summary.closingBalance < 0 ? "var(--attention)" : undefined }}>
-            {fmtCurrency(summary.closingBalance)}
-          </span>
-          <span style={{ fontSize: 11.5, color: "var(--muted)" }}>{summary.closingIsActual ? "recorded" : "projected"}</span>
-        </span>
+        <ClosingBalance summary={summary} />
         <span style={{ display: "inline-flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
           <span style={settingLabel}>Daily spend rate</span>
           <MoneyCell
@@ -246,8 +271,6 @@ function StartedMonth({ appState, month, run }: { appState: AppState; month: Cas
           {lowThreshold !== 0 && <> — below your {fmtCurrency(lowThreshold)} warning level</>}
         </div>
       )}
-
-      <MonthFlowChart flow={monthFlow(summary)} />
 
       {summary.periods.map((p) => (
         <PeriodBlock

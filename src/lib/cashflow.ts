@@ -489,7 +489,7 @@ export function propagateCarriedOpenings(
 }
 
 // ---------------------------------------------------------------------------
-// Month flow (the This Month chart)
+// Month flow (the Month Chart page)
 // ---------------------------------------------------------------------------
 
 // The name an entry is charted under. A trailing note in brackets is dropped

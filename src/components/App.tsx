@@ -5,6 +5,7 @@ import type { AppState } from "@/lib/types";
 import { fetchState } from "@/lib/api";
 import { Sidebar } from "./Sidebar";
 import { CashFlowMonthView } from "./cashflow/CashFlowMonthView";
+import { CashFlowChartView } from "./cashflow/CashFlowChartView";
 import { RecurringItems } from "./cashflow/RecurringItems";
 import { BankAccounts } from "./cashflow/BankAccounts";
 import { BankImport } from "./cashflow/BankImport";
@@ -33,6 +34,7 @@ export type Screen =
   | "cards"
   | "templates"
   | "cf-month"
+  | "cf-chart"
   | "cf-bank"
   | "cf-import"
   | "cf-items"
@@ -182,7 +184,7 @@ function AppInner({ signOutEnabled }: { signOutEnabled: boolean }) {
         signOutEnabled={signOutEnabled}
       />
 
-      <div style={{ flex: 1, minWidth: 0, padding: "32px 44px 100px", boxSizing: "border-box" }}>
+      <div className="app-main" style={{ flex: 1, minWidth: 0, padding: "32px 44px 100px", boxSizing: "border-box" }}>
         {/* A reload that fails *after* data has loaded once used to be
             invisible: the mutation's own success toast appeared over a table
             still showing the pre-change rows, so the change looked like it
@@ -227,12 +229,15 @@ function AppInner({ signOutEnabled }: { signOutEnabled: boolean }) {
 
         {needsAccount && <NoAccount onGoAccounts={() => setScreen("cf-accounts")} />}
         {accountId && appState.bankAccounts.length > 1 && screen.startsWith("cf-") && screen !== "cf-accounts" && (
-          <div style={{ marginBottom: 12 }}>
+          <div className="no-print" style={{ marginBottom: 12 }}>
             <AccountPicker accounts={appState.bankAccounts} value={accountId} onChange={setCfAccountId} />
           </div>
         )}
         {accountId && screen === "cf-month" && (
           <CashFlowMonthView appState={appState} onReload={reload} accountId={accountId} monthKey={cfMonthKey} onMonthKeyChange={setCfMonthKey} />
+        )}
+        {accountId && screen === "cf-chart" && (
+          <CashFlowChartView appState={appState} accountId={accountId} monthKey={cfMonthKey} onMonthKeyChange={setCfMonthKey} onGoMonth={() => setScreen("cf-month")} />
         )}
         {accountId && screen === "cf-bank" && <BankTransactions appState={appState} onReload={reload} accountId={accountId} />}
         {accountId && screen === "cf-import" && <BankImport appState={appState} onReload={reload} accountId={accountId} onGoTransactions={() => setScreen("cf-bank")} />}

@@ -15,6 +15,7 @@ const NAV_ITEMS: Record<Workspace, { screen: Screen; label: string }[]> = {
   ],
   cashflow: [
     { screen: "cf-month", label: "This Month" },
+    { screen: "cf-chart", label: "Month Chart" },
     { screen: "cf-bank", label: "Bank Transactions" },
     { screen: "cf-import", label: "Import Bank CSV" },
     { screen: "cf-items", label: "Recurring Items" },
@@ -105,6 +106,7 @@ export function Sidebar({
 
   return (
     <div
+      className="no-print"
       style={{
         width: 232,
         flexShrink: 0,
