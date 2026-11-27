@@ -183,7 +183,20 @@ Mappings are shared by both sides. The design is in
   entries don't affect the balance; Excluded is for a bill paid from another
   account, tracked here at full strength rather than greyed out like Skipped. Recording the end-of-month balance
   closes the month. Payments land on their business-day posting date
-  (weekends and the account's bank holidays).
+  (weekends and the account's bank holidays). The line under the title shows
+  the opening balance and the closing balance (projected until the final
+  checkpoint is recorded).
+- **Month Chart** — the same month as a printable dashboard: tiles for opening
+  balance, deposits, withdrawals, and closing balance; a column chart of
+  deposits then withdrawals, each largest first, with every column labelled
+  and its still-projected part drawn lighter; and both sides listed with
+  amounts. Entries with the same name merge into one column, and a trailing
+  bracketed note is dropped so "152 Rent (first)" and "(second)" share one
+  (owner initials like "(SR)" are kept). Weekly Spend is one column: what
+  each recorded checkpoint implies (opening + deposits − withdrawals − the
+  recorded balance), or the daily-rate estimate where none is recorded — so
+  the columns always add up to the closing balance. It follows the month
+  picked on This Month, and Print gives a landscape page without the sidebar.
 - **Bank Transactions / Import Bank CSV** — the chequing export (Date,
   Transaction Details, Funds Out, Funds In), classified from its details
   prefixes, with suggested matches to planned entries.

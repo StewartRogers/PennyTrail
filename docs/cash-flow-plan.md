@@ -150,6 +150,7 @@ Categories, Vendor Mappings, Cards, Import Templates.
 | Screen | Purpose |
 |---|---|
 | **This Month** (default) | The spreadsheet view: periods, items, statuses, running balance, checkpoints |
+| **Month Chart** *(added 2026-11)* | The selected month as a printable dashboard: balance tiles, a deposits/withdrawals column chart, and both sides listed (section 3.2.1) |
 | **Upcoming** | Overdue, due in the next 7–14 days, and unpaid items this month, across months |
 | **Spending** *(phase 4)* | Debit purchases per period against the estimate, by category |
 | **Bank Transactions** *(phase 4)* | Imported bank lines with review and matching |
@@ -207,6 +208,39 @@ convenience only, not data.
 - **Checkpoint dates** default to the first Friday, second Friday, and last
   day of the month, and can be edited per month. This covers a month where
   the first Friday is the 1st, or a long weekend.
+
+### 3.2.1 The "Month Chart" screen (as built, 2026-11)
+
+A read-only, printable view of the month picked on This Month (the two
+screens share the month header and selection).
+
+- **Tiles:** opening balance (and where it came from), deposits,
+  withdrawals (including Weekly Spend), and closing balance, marked
+  projected or recorded. Opening + deposits − withdrawals = closing.
+- **Column chart:** deposits first, then withdrawals, each largest first.
+  Each column is labelled with its amount; the part still Projected is drawn
+  lighter on top of the Actual part; hover shows the split.
+- **Lists:** both sides with amounts and totals, which is what carries the
+  numbers on paper.
+- **Merging:** entries with the same name share a column. A trailing
+  bracketed note is dropped ("152 Rent (first)" and "152 Rent (second)" are
+  both "152 Rent"), except owner initials such as "(SR)" or "(KA)".
+  Skipped and Excluded entries are left out, as from the balance.
+- **Weekly Spend** is one column. A period with a recorded checkpoint
+  contributes the spending its balance implies — opening + deposits −
+  withdrawals − recorded balance (start at 100, deposit 10, withdraw 20,
+  record 75: 15 of spending) — and one without contributes the daily-rate
+  estimate, shown lighter.
+- **Printing:** a Print button; the sidebar, pickers, and buttons are left
+  out, the page prints landscape, and the chart is scaled to the paper.
+
+This Month itself shows the opening and closing balance on one line under
+the title; the summary tiles described above (projected month end, lowest
+balance, unpaid bills) were dropped on 2026-11-09, and the lowest balance
+appears only as a warning when it dips below the account's threshold.
+
+The logic is `monthFlow` / `flowGroupName` in `src/lib/cashflow.ts`; the
+screen is `src/components/cashflow/CashFlowChartView.tsx`.
 
 ### 3.3 Balance math
 

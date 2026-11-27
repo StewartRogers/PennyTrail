@@ -45,5 +45,7 @@ describe("Sidebar", () => {
     const props = renderSidebar("cashflow");
     fireEvent.click(screen.getByRole("button", { name: "Recurring Items" }));
     expect(props.onNavigate).toHaveBeenCalledWith("cf-items");
+    fireEvent.click(screen.getByRole("button", { name: "Month Chart" }));
+    expect(props.onNavigate).toHaveBeenCalledWith("cf-chart");
   });
 });

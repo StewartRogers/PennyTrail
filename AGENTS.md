@@ -127,6 +127,18 @@ This block is written and re-added by `next dev` — verify at `node_modules/nex
   `scheduled` / `posted` on read, so don't reintroduce them. Only the user
   changes a status: nothing (bank matching, unmatching, editing a date or
   amount) may set one as a side effect.
+- **Month Chart (`cf-chart`) is a read-only view of This Month's month.**
+  Both screens share `MonthHeader` and App's `cfMonthKey`, so they always
+  show the same month. Its numbers come from `monthFlow` in
+  `src/lib/cashflow.ts` (pure, in cents, tested): columns merge by
+  `flowGroupName` (a trailing bracketed note is dropped, owner initials kept),
+  Skipped/Excluded entries are left out, and Weekly Spend is the implied
+  spend for recorded checkpoints plus the estimate for the rest, which is
+  what keeps opening + deposits − withdrawals equal to the closing balance —
+  keep that identity if you touch it. The page is built to print: print
+  rules live at the end of `src/app/globals.css` (`.no-print`, the named
+  `@page cf-chart` for landscape, the chart's capped print height), and the
+  deposits/withdrawals lists carry the numbers that hover shows on screen.
 - **Dates and times are BC's, via `src/lib/bcTime.ts`.** BC's year-round
   single time standard is Pacific Time, abbreviated PCT (UTC−7 year-round
   since 8 March 2026); times are shown with "PCT". Don't use the

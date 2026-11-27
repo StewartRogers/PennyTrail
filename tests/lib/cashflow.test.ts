@@ -661,6 +661,55 @@ describe("monthFlow", () => {
     }
   });
 
+  it("keeps a deposit and a withdrawal of the same name apart, and merges names regardless of case", () => {
+    const m = month({ dailySpendRate: 0 });
+    const entries = [
+      entry({ name: "Transfer", kind: "deposit", expectedAmount: 100 }),
+      entry({ name: "Transfer", expectedAmount: 40 }),
+      entry({ name: "BC Hydro", expectedAmount: 50, postingDate: "2026-10-01" }),
+      entry({ name: "BC HYDRO (Nov)", expectedAmount: 25, postingDate: "2026-10-20" }),
+    ];
+    const flow = monthFlow(summarizeMonth(m, entries));
+    const cols = flow.columns.filter((c) => !c.isSpend).map((c) => [c.label, c.kind, c.total, c.count]);
+    // The label is the earliest entry's name.
+    expect(cols).toEqual([
+      ["Transfer", "deposit", 100, 1],
+      ["BC Hydro", "bill", 75, 2],
+      ["Transfer", "bill", 40, 1],
+    ]);
+  });
+
+  it("breaks ties in amount by name", () => {
+    const m = month({ dailySpendRate: 0 });
+    const entries = [entry({ name: "Zed", expectedAmount: 10 }), entry({ name: "Alpha", expectedAmount: 10 })];
+    expect(monthFlow(summarizeMonth(m, entries)).columns.filter((c) => !c.isSpend).map((c) => c.label)).toEqual(["Alpha", "Zed"]);
+  });
+
+  it("counts an entry dated after the last checkpoint", () => {
+    const m = month({ dailySpendRate: 0, periods: [{ id: "p", endDate: "2026-10-15", label: "End of month" }] });
+    const flow = monthFlow(summarizeMonth(m, [entry({ name: "Late", expectedAmount: 30, postingDate: "2026-10-28" })]));
+    expect(flow.withdrawals).toBe(30);
+    expect(flow.closing).toBe(9970);
+  });
+
+  it("lets Weekly Spend go negative when a recorded balance beats the plan, and still adds up", () => {
+    // 100 + 10 − 20 = 90 on paper; a recorded 95 means 5 more came in than was listed.
+    const m = month({ openingBalance: 100, dailySpendRate: 1, periods: [{ id: "p", endDate: "2026-10-31", label: "End of month", actualBalance: 95 }] });
+    const entries = [
+      entry({ name: "Pay", kind: "deposit", expectedAmount: 10, status: "actual" }),
+      entry({ name: "Bill", expectedAmount: 20, status: "actual" }),
+    ];
+    const flow = monthFlow(summarizeMonth(m, entries));
+    expect(flow.columns.find((c) => c.isSpend)?.total).toBe(-5);
+    expect([flow.withdrawals, flow.closing]).toEqual([15, 95]);
+  });
+
+  it("charts only Weekly Spend for a month with no entries", () => {
+    const flow = monthFlow(summarizeMonth(month(), []));
+    expect(flow.columns.map((c) => [c.label, c.total, c.projected])).toEqual([["Weekly Spend", 1550, 1550]]);
+    expect([flow.deposits, flow.withdrawals, flow.closing]).toEqual([0, 1550, 8450]);
+  });
+
   it("sums in cents", () => {
     const m = month({ dailySpendRate: 0 });
     const entries = [entry({ name: "A (1)", expectedAmount: 0.1 }), entry({ name: "A (2)", expectedAmount: 0.2 })];

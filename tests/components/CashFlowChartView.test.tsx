@@ -95,6 +95,84 @@ describe("CashFlowChartView", () => {
     expect(tip).toHaveTextContent("3 periods");
   });
 
+  it("describes a merged, fully actual column and a deposit in the hover", () => {
+    const { month, entries } = october();
+    renderView(makeAppState({ bankAccounts: [account], cashFlowMonths: [month], cashFlowEntries: entries }));
+    const chart = screen.getByRole("region", { name: "Deposits and withdrawals" });
+    fireEvent.mouseEnter(chart.querySelector('[data-column="Rent"]')!);
+    expect(screen.getByRole("tooltip")).toHaveTextContent(/^Rent−\$1,500\.00All actual2 entries combined$/);
+    fireEvent.mouseEnter(chart.querySelector('[data-column="Hydro"]')!);
+    expect(screen.getByRole("tooltip")).toHaveTextContent(/^Hydro−\$188\.77All projected$/);
+    fireEvent.mouseEnter(chart.querySelector('[data-column="SR pay"]')!);
+    expect(screen.getByRole("tooltip")).toHaveTextContent("+$3,000.50");
+  });
+
+  it("hides the hover when the pointer leaves, and shows it on keyboard focus", () => {
+    const { month, entries } = october();
+    renderView(makeAppState({ bankAccounts: [account], cashFlowMonths: [month], cashFlowEntries: entries }));
+    const chart = screen.getByRole("region", { name: "Deposits and withdrawals" });
+    const cibc = chart.querySelector('[data-column="CIBC"]')!;
+    fireEvent.mouseEnter(cibc);
+    fireEvent.mouseLeave(chart.querySelector(".cf-flow-inner")!);
+    expect(screen.queryByRole("tooltip")).not.toBeInTheDocument();
+    fireEvent.focus(cibc);
+    expect(screen.getByRole("tooltip")).toHaveTextContent("CIBC");
+    fireEvent.blur(cibc);
+    expect(screen.queryByRole("tooltip")).not.toBeInTheDocument();
+  });
+
+  it("never draws a non-zero column thinner than 3px", () => {
+    const { month, entries } = october();
+    // $5 beside $3,000 of pay would otherwise be well under a pixel.
+    const tiny = { ...entries[0], id: "Stamps", name: "Stamps", expectedAmount: 5 };
+    renderView(makeAppState({ bankAccounts: [account], cashFlowMonths: [month], cashFlowEntries: [...entries, tiny] }));
+    const chart = screen.getByRole("region", { name: "Deposits and withdrawals" });
+    const height = (label: string) => Number(chart.querySelector(`[data-column="${label}"]`)!.closest("g")!.getAttribute("data-bar-height"));
+    expect(height("Stamps")).toBe(3);
+    expect(height("SR pay")).toBeGreaterThan(100);
+  });
+
+  it("turns the amounts up the columns when there are too many to fit across", () => {
+    const { month, entries } = october();
+    const many = Array.from({ length: 24 }, (_, i) => ({ ...entries[0], id: `Bill ${i}`, name: `Bill ${i}`, expectedAmount: 1000 + i }));
+    renderView(makeAppState({ bankAccounts: [account], cashFlowMonths: [month], cashFlowEntries: many }));
+    const values = Array.from(screen.getByRole("region", { name: "Deposits and withdrawals" }).querySelectorAll("[data-value]"));
+    expect(values.length).toBe(25);
+    expect(values.every((v) => v.getAttribute("transform")?.startsWith("rotate(-90"))).toBe(true);
+  });
+
+  it("writes the amounts across the columns when they fit", () => {
+    const { month, entries } = october();
+    renderView(makeAppState({ bankAccounts: [account], cashFlowMonths: [month], cashFlowEntries: entries }));
+    const values = Array.from(screen.getByRole("region", { name: "Deposits and withdrawals" }).querySelectorAll("[data-value]"));
+    expect(values.every((v) => v.getAttribute("transform") === null)).toBe(true);
+  });
+
+  it("says where a carried opening came from", () => {
+    const { month, entries } = october();
+    const september: CashFlowMonth = { ...month, id: "m_sep", month: "2026-09", periods: [{ id: "s1", endDate: "2026-09-30", label: "End of month" }] };
+    renderView(makeAppState({ bankAccounts: [account], cashFlowMonths: [september, { ...month, openingSource: "carried" }], cashFlowEntries: entries }));
+    expect(screen.getByTestId("tile-Opening balance").parentElement).toHaveTextContent(/September 2026's close$/);
+  });
+
+  it("marks a hand-entered opening and a recorded closing", () => {
+    const { month, entries } = october();
+    const recorded = { ...month, periods: month.periods.map((p) => (p.id === "p3" ? { ...p, actualBalance: 8700 } : p)) };
+    renderView(makeAppState({ bankAccounts: [account], cashFlowMonths: [recorded], cashFlowEntries: entries }));
+    expect(screen.getByTestId("tile-Opening balance").parentElement).toHaveTextContent(/entered by hand$/);
+    expect(screen.getByTestId("tile-Closing balance")).toHaveTextContent("$8,700.00");
+    expect(screen.getByTestId("tile-Closing balance").parentElement).toHaveTextContent(/recorded$/);
+  });
+
+  it("leaves Print, the month picker, and the hover off the printed page", () => {
+    const { month, entries } = october();
+    renderView(makeAppState({ bankAccounts: [account], cashFlowMonths: [month], cashFlowEntries: entries }));
+    expect(screen.getByRole("button", { name: "Print" }).closest(".no-print")).not.toBeNull();
+    expect(screen.getByTitle("Next month").closest(".no-print")).not.toBeNull();
+    fireEvent.mouseEnter(screen.getByRole("region", { name: "Deposits and withdrawals" }).querySelector("[data-column]")!);
+    expect(screen.getByRole("tooltip")).toHaveClass("no-print");
+  });
+
   it("lists the columns with their amounts, for reading on paper", () => {
     const { month, entries } = october();
     renderView(makeAppState({ bankAccounts: [account], cashFlowMonths: [month], cashFlowEntries: entries }));

@@ -233,7 +233,7 @@ function Plot({ columns, plotHeight }: { columns: FlowColumn[]; plotHeight: numb
             const labelX = xOf(i) + step / 2 + 3;
             const labelY = baseline + 12;
             return (
-              <g key={c.key} opacity={active === null || active === i ? 1 : 0.55}>
+              <g key={c.key} data-bar-height={totalH.toFixed(1)} opacity={active === null || active === i ? 1 : 0.55}>
                 {confirmedH > 0 && (
                   <path
                     d={projectedH > 0 ? `M${x},${baseline}V${baseline - confirmedH}H${x + barWidth}V${baseline}Z` : topRoundedBar(x, baseline - confirmedH, barWidth, confirmedH, 4)}
