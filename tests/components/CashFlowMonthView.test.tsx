@@ -72,7 +72,10 @@ describe("CashFlowMonthView", () => {
     renderView(makeAppState({ bankAccounts: [account], cashFlowMonths: [month], cashFlowEntries: entries }));
     expect(screen.getByRole("heading", { name: "October 2026" })).toBeInTheDocument();
     // The rate sits in the item name, not in the Status column.
-    const names = screen.getAllByText(/^Weekly Spend/).map((el) => el.textContent);
+    const names = screen
+      .getAllByRole("table")
+      .flatMap((t) => within(t).queryAllByText(/^Weekly Spend/))
+      .map((el) => el.textContent);
     expect(names).toEqual(["Weekly Spend [$50.00/day × 2]", "Weekly Spend [$50.00/day × 7]", "Weekly Spend [$50.00/day × 22]"]);
     expect(screen.getAllByText("END OF WEEK")).toHaveLength(2);
     expect(screen.getByText("END OF MONTH")).toBeInTheDocument();
@@ -127,9 +130,59 @@ describe("CashFlowMonthView", () => {
   it("has no summary tiles above the periods", () => {
     const { month, entries } = october();
     renderView(makeAppState({ bankAccounts: [account], cashFlowMonths: [month], cashFlowEntries: entries }));
-    for (const label of ["Projected month end", "Closing balance", "Lowest balance ahead", "Unpaid bills"]) {
+    for (const label of ["Projected month end", "Lowest balance ahead", "Unpaid bills"]) {
       expect(screen.queryByText(label)).not.toBeInTheDocument();
     }
+  });
+
+  it("shows the closing balance beside the opening, projected until the last checkpoint is in", () => {
+    const { month, entries } = october();
+    renderView(makeAppState({ bankAccounts: [account], cashFlowMonths: [month], cashFlowEntries: entries }));
+    // 10,016.79 at the second checkpoint − 1,100 Weekly Spend − 188.77 Hydro.
+    expect(screen.getByTestId("closing-balance")).toHaveTextContent("$8,728.02");
+    expect(screen.getByText("projected")).toBeInTheDocument();
+  });
+
+  it("shows a recorded closing balance as recorded", () => {
+    const { month, entries } = october();
+    const recorded = { ...month, periods: month.periods.map((p) => (p.id === "p3" ? { ...p, actualBalance: 8700 } : p)) };
+    renderView(makeAppState({ bankAccounts: [account], cashFlowMonths: [recorded], cashFlowEntries: entries }));
+    expect(screen.getByTestId("closing-balance")).toHaveTextContent("$8,700.00");
+    expect(screen.getByText("recorded")).toBeInTheDocument();
+  });
+
+  it("charts deposits first, then withdrawals with Weekly Spend as one column", () => {
+    const { month, entries } = october();
+    renderView(makeAppState({ bankAccounts: [account], cashFlowMonths: [month], cashFlowEntries: entries }));
+    const chart = screen.getByRole("region", { name: "Deposits and withdrawals" });
+    const columns = Array.from(chart.querySelectorAll("[data-column]")).map((el) => el.getAttribute("data-column"));
+    // Weekly Spend: P1 implies 128.02 (11,178.03 projected, 11,150.01 recorded); P2 + P3 estimate 1,450.
+    expect(columns).toEqual(["SR pay", "Weekly Spend", "Rent", "Simplii", "CIBC", "Hydro", "Insurance"]);
+    expect(within(chart).getByText("$3,000.50")).toBeInTheDocument();
+    // Withdrawals: 1,578.02 + 1,500 + 754.30 + 222.47 + 188.77 + 28.92.
+    expect(within(chart).getByText("$4,272.48")).toBeInTheDocument();
+  });
+
+  it("shows a column's split on hover", () => {
+    const { month, entries } = october();
+    renderView(makeAppState({ bankAccounts: [account], cashFlowMonths: [month], cashFlowEntries: entries }));
+    const chart = screen.getByRole("region", { name: "Deposits and withdrawals" });
+    fireEvent.mouseEnter(chart.querySelector('[data-column="Weekly Spend"]')!);
+    const tip = screen.getByRole("tooltip");
+    expect(tip).toHaveTextContent("−$1,578.02");
+    expect(tip).toHaveTextContent("From recorded balances$128.02");
+    expect(tip).toHaveTextContent("Estimated$1,450.00");
+    expect(tip).toHaveTextContent("3 periods");
+  });
+
+  it("hides and shows the chart", () => {
+    const { month, entries } = october();
+    renderView(makeAppState({ bankAccounts: [account], cashFlowMonths: [month], cashFlowEntries: entries }));
+    const chart = screen.getByRole("region", { name: "Deposits and withdrawals" });
+    fireEvent.click(within(chart).getByRole("button", { name: "Hide chart" }));
+    expect(chart.querySelector("[data-column]")).toBeNull();
+    fireEvent.click(within(chart).getByRole("button", { name: "Show chart" }));
+    expect(chart.querySelector("[data-column]")).not.toBeNull();
   });
 
   it("edits the first month's opening balance and the daily spend rate", async () => {

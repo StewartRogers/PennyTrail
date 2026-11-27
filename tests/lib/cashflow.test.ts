@@ -4,9 +4,11 @@ import {
   defaultPeriods,
   entryDate,
   expectedAmountFor,
+  flowGroupName,
   generateMonthEntries,
   isOverdue,
   isPaymentSetUp,
+  monthFlow,
   needsScheduling,
   periodIndexForDate,
   periodSpans,
@@ -574,5 +576,82 @@ describe("propagateCarriedOpenings", () => {
     const nov = month({ id: "nov", month: "2026-11", openingBalance: 0, openingSource: "carried", periods: defaultPeriods("2026-11", () => newId("p")) });
     propagateCarriedOpenings([oct, nov], [], "acct", "2026-10");
     expect(nov.openingBalance).toBe(777.77);
+  });
+});
+
+describe("flowGroupName", () => {
+  it("drops a bracketed note so the parts of one bill share a name", () => {
+    expect(flowGroupName("152 Rent (first)")).toBe("152 Rent");
+    expect(flowGroupName("152 Rent (second)")).toBe("152 Rent");
+    expect(flowGroupName("  BC  Hydro ")).toBe("BC Hydro");
+  });
+
+  it("keeps an owner's initials, which tell two people's items apart", () => {
+    expect(flowGroupName("Stewart Pay (SR)")).toBe("Stewart Pay (SR)");
+    expect(flowGroupName("PCF MC (KA)")).toBe("PCF MC (KA)");
+  });
+
+  it("leaves a name that is only a bracket alone", () => {
+    expect(flowGroupName("(misc)")).toBe("(misc)");
+  });
+});
+
+describe("monthFlow", () => {
+  function october(lastActual?: number) {
+    const m = month({
+      periods: [
+        { id: "p1", endDate: "2026-10-02", label: "End of week", actualBalance: 10380 },
+        { id: "p2", endDate: "2026-10-09", label: "End of week" },
+        { id: "p3", endDate: "2026-10-31", label: "End of month", ...(lastActual !== undefined ? { actualBalance: lastActual } : {}) },
+      ],
+    });
+    const entries = [
+      entry({ name: "152 Rent (first)", expectedAmount: 1000, status: "actual" }),
+      entry({ name: "152 Rent (second)", expectedAmount: 1000 }),
+      entry({ name: "Stewart Pay (SR)", kind: "deposit", expectedAmount: 2500, status: "actual" }),
+      entry({ name: "Stewart Pay (SR)", kind: "deposit", expectedAmount: 2500, postingDate: "2026-10-15" }),
+      entry({ name: "Kerri Pay (KA)", kind: "deposit", expectedAmount: 1800, postingDate: "2026-10-15" }),
+      entry({ name: "Hydro", expectedAmount: 150, postingDate: "2026-10-20", status: "skipped" }),
+      entry({ name: "Visa", expectedAmount: 300, postingDate: "2026-10-20", status: "excluded" }),
+      entry({ name: "Fortis", expectedAmount: 80, actualAmount: 80.25, postingDate: "2026-10-22" }),
+    ];
+    return monthFlow(summarizeMonth(m, entries));
+  }
+
+  it("merges entries into columns, deposits first, each largest first", () => {
+    const flow = october();
+    expect(flow.columns.map((c) => [c.label, c.kind, c.total, c.confirmed, c.projected, c.count])).toEqual([
+      ["Stewart Pay (SR)", "deposit", 5000, 2500, 2500, 2],
+      ["Kerri Pay (KA)", "deposit", 1800, 0, 1800, 1],
+      ["152 Rent", "bill", 2000, 1000, 1000, 2],
+      // P1's checkpoint (10,380 against 10,400 projected) implies 120 of
+      // spending; P2 and P3 keep the estimate: 350 + 1,100.
+      ["Weekly Spend", "bill", 1570, 120, 1450, 3],
+      ["Fortis", "bill", 80.25, 0, 80.25, 1],
+    ]);
+    expect(flow.columns.find((c) => c.label === "Weekly Spend")?.isSpend).toBe(true);
+  });
+
+  it("leaves out Skipped and Excluded entries, as the balance does", () => {
+    const labels = october().columns.map((c) => c.label);
+    expect(labels).not.toContain("Hydro");
+    expect(labels).not.toContain("Visa");
+  });
+
+  it("adds up to the closing balance, projected or recorded", () => {
+    for (const lastActual of [undefined, 12000.37]) {
+      const flow = october(lastActual);
+      expect([flow.opening, flow.deposits, flow.withdrawals]).toEqual([10000, 6800, lastActual === undefined ? 3650.25 : 4799.63]);
+      expect(flow.closingIsActual).toBe(lastActual !== undefined);
+      expect(Math.round((flow.opening + flow.deposits - flow.withdrawals) * 100)).toBe(Math.round(flow.closing * 100));
+    }
+  });
+
+  it("sums in cents", () => {
+    const m = month({ dailySpendRate: 0 });
+    const entries = [entry({ name: "A (1)", expectedAmount: 0.1 }), entry({ name: "A (2)", expectedAmount: 0.2 })];
+    const flow = monthFlow(summarizeMonth(m, entries));
+    expect(flow.columns.find((c) => c.label === "A")?.total).toBe(0.3);
+    expect(flow.withdrawals).toBe(0.3);
   });
 });

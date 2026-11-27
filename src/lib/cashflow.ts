@@ -6,7 +6,7 @@
 // drifts (0.1 + 0.2 !== 0.3), and a balance that's off by a cent after a
 // month of rows is exactly the kind of error this screen exists to rule out.
 
-import type { BankAccount, CashFlowEntry, CashFlowItem, CashFlowMonth, CashFlowPeriod } from "./types";
+import type { BankAccount, CashFlowEntry, CashFlowItem, CashFlowKind, CashFlowMonth, CashFlowPeriod } from "./types";
 import { addDays, addMonths, daysBetween, monthEnd, monthKeyOf, monthStart } from "./dates";
 import { nthWeekdayOfMonth, rollToBusinessDay } from "./businessDays";
 import { occurrencesBetween } from "./recurrence";
@@ -486,4 +486,101 @@ export function propagateCarriedOpenings(
     previous = next;
   }
   return changed;
+}
+
+// ---------------------------------------------------------------------------
+// Month flow (the This Month chart)
+// ---------------------------------------------------------------------------
+
+// The name an entry is charted under. A trailing note in brackets is dropped
+// so the parts of one bill share a column ("152 Rent (first)" and "152 Rent
+// (second)" are both "152 Rent") — except an owner's initials ("Stewart Pay
+// (SR)", "PCF MC (KA)"), which tell two people's items apart.
+export function flowGroupName(name: string): string {
+  const trimmed = name.trim().replace(/\s+/g, " ");
+  const match = /^(.*\S)\s*\(([^()]*)\)$/.exec(trimmed);
+  if (!match || /^[A-Z]{1,3}$/.test(match[2].trim())) return trimmed;
+  return match[1];
+}
+
+export interface FlowColumn {
+  key: string;
+  label: string;
+  kind: CashFlowKind;
+  total: number;
+  // Status Actual — or, for Weekly Spend, what recorded checkpoints imply.
+  confirmed: number;
+  // Still Projected — or, for Weekly Spend, the estimate for periods
+  // without a recorded checkpoint.
+  projected: number;
+  // Entries merged into the column (periods, for Weekly Spend).
+  count: number;
+  isSpend?: boolean;
+}
+
+export interface MonthFlow {
+  opening: number;
+  closing: number;
+  closingIsActual: boolean;
+  deposits: number;
+  // Bills plus Weekly Spend, so opening + deposits − withdrawals = closing.
+  withdrawals: number;
+  // Deposits first, then withdrawals, each largest first.
+  columns: FlowColumn[];
+}
+
+// The month's money in and out as chart columns. Entries that share a
+// flowGroupName (and kind) merge; Skipped and Excluded ones are left out, as
+// they are from the balance. Weekly Spend is one column: a period with a
+// recorded checkpoint contributes the spend its balance implies, one without
+// contributes the estimate — which is what makes the columns add up to the
+// closing balance.
+export function monthFlow(summary: MonthSummary): MonthFlow {
+  interface Acc { key: string; label: string; kind: CashFlowKind; confirmed: number; projected: number; count: number; isSpend?: boolean }
+  const groups = new Map<string, Acc>();
+  const spend: Acc = { key: "spend", label: "Weekly Spend", kind: "bill", confirmed: 0, projected: 0, count: 0, isSpend: true };
+
+  for (const p of summary.periods) {
+    spend.count++;
+    if (p.impliedSpend !== undefined) spend.confirmed += toCents(p.impliedSpend);
+    else spend.projected += toCents(p.spend);
+    for (const row of p.rows) {
+      if (!row.counted) continue;
+      const label = flowGroupName(row.entry.name);
+      const key = `${row.entry.kind}:${label.toLowerCase()}`;
+      let acc = groups.get(key);
+      if (!acc) {
+        acc = { key, label, kind: row.entry.kind, confirmed: 0, projected: 0, count: 0 };
+        groups.set(key, acc);
+      }
+      acc.count++;
+      if (row.entry.status === "actual") acc.confirmed += toCents(row.amount);
+      else acc.projected += toCents(row.amount);
+    }
+  }
+
+  const all = [...groups.values()];
+  if (spend.count > 0) all.push(spend);
+  const total = (a: Acc) => a.confirmed + a.projected;
+  const order = (a: Acc, b: Acc) => total(b) - total(a) || a.label.localeCompare(b.label);
+  const columns: FlowColumn[] = [...all.filter((a) => a.kind === "deposit").sort(order), ...all.filter((a) => a.kind === "bill").sort(order)].map((a) => ({
+    key: a.key,
+    label: a.label,
+    kind: a.kind,
+    total: fromCents(total(a)),
+    confirmed: fromCents(a.confirmed),
+    projected: fromCents(a.projected),
+    count: a.count,
+    ...(a.isSpend ? { isSpend: true } : {}),
+  }));
+  const sum = (kind: CashFlowKind) => fromCents(all.filter((a) => a.kind === kind).reduce((s, a) => s + total(a), 0));
+
+  return {
+    opening: summary.opening,
+    closing: summary.closingBalance,
+    closingIsActual: summary.closingIsActual,
+    deposits: sum("deposit"),
+    withdrawals: sum("bill"),
+    columns,
+  };
 }

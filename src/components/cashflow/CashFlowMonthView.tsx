@@ -10,7 +10,8 @@ import {
   updateCashFlowEntry,
   updateCashFlowMonth,
 } from "@/lib/api";
-import { entriesForMonth, entryAmount, entryDate, summarizeMonth, type EntryRow, type PeriodSummary } from "@/lib/cashflow";
+import { entriesForMonth, entryAmount, entryDate, monthFlow, summarizeMonth, type EntryRow, type PeriodSummary } from "@/lib/cashflow";
+import { MonthFlowChart } from "./MonthFlowChart";
 import { suggestCheckpointBalances, type CheckpointSuggestion } from "@/lib/bankMatching";
 import { addMonths, monthEnd } from "@/lib/dates";
 import { isValidIsoDate } from "@/lib/request";
@@ -221,6 +222,13 @@ function StartedMonth({ appState, month, run }: { appState: AppState; month: Cas
           )}
         </span>
         <span style={{ display: "inline-flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+          <span style={settingLabel}>Closing balance</span>
+          <span data-testid="closing-balance" style={{ fontFamily: "var(--mono)", fontWeight: 600, fontSize: 13.5, color: summary.closingBalance < 0 ? "var(--attention)" : undefined }}>
+            {fmtCurrency(summary.closingBalance)}
+          </span>
+          <span style={{ fontSize: 11.5, color: "var(--muted)" }}>{summary.closingIsActual ? "recorded" : "projected"}</span>
+        </span>
+        <span style={{ display: "inline-flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
           <span style={settingLabel}>Daily spend rate</span>
           <MoneyCell
             ariaLabel="Daily spend rate"
@@ -238,6 +246,8 @@ function StartedMonth({ appState, month, run }: { appState: AppState; month: Cas
           {lowThreshold !== 0 && <> — below your {fmtCurrency(lowThreshold)} warning level</>}
         </div>
       )}
+
+      <MonthFlowChart flow={monthFlow(summary)} />
 
       {summary.periods.map((p) => (
         <PeriodBlock
