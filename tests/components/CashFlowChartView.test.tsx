@@ -75,6 +75,14 @@ describe("CashFlowChartView", () => {
     expect(columns).toEqual(["SR pay", "Weekly Spend", "Rent", "Simplii", "CIBC", "Hydro", "Insurance"]);
   });
 
+  it("labels every column with its amount", () => {
+    const { month, entries } = october();
+    renderView(makeAppState({ bankAccounts: [account], cashFlowMonths: [month], cashFlowEntries: entries }));
+    const chart = screen.getByRole("region", { name: "Deposits and withdrawals" });
+    const labels = Array.from(chart.querySelectorAll("[data-value]")).map((el) => `${el.getAttribute("data-value")} ${el.textContent}`);
+    expect(labels).toEqual(["SR pay $3,001", "Weekly Spend $1,578", "Rent $1,500", "Simplii $754", "CIBC $222", "Hydro $189", "Insurance $29"]);
+  });
+
   it("shows a column's split on hover", () => {
     const { month, entries } = october();
     renderView(makeAppState({ bankAccounts: [account], cashFlowMonths: [month], cashFlowEntries: entries }));

@@ -2,7 +2,7 @@
 
 import { useLayoutEffect, useRef, useState } from "react";
 import type { FlowColumn, MonthFlow } from "@/lib/cashflow";
-import { fmtCurrency, fmtCurrencyShort } from "@/lib/format";
+import { fmtCurrency, fmtCurrencyShort, fmtCurrencyWhole } from "@/lib/format";
 
 // The month's deposits and withdrawals as columns: deposits first, then
 // withdrawals, each largest first. The confirmed part of a column (status
@@ -18,6 +18,12 @@ const GROUP_GAP = 22;
 const MIN_STEP = 30;
 const MAX_STEP = 72;
 const LABEL_CHARS = 22;
+// Value labels: whole dollars in 10px mono, about 6.1px a character.
+const VALUE_FONT = 10;
+const VALUE_CHAR_WIDTH = 6.1;
+// A column that isn't zero is never drawn thinner than this, so a $48 bill
+// beside $5,000 of pay still shows.
+const MIN_BAR = 3;
 
 function niceMax(value: number): number {
   if (value <= 0) return 100;
@@ -146,7 +152,14 @@ function Plot({ columns, plotHeight }: { columns: FlowColumn[]; plotHeight: numb
   const width = MARGIN.left + MARGIN.right + gaps + step * columns.length;
   const height = MARGIN.top + plotHeight + MARGIN.bottom;
   const baseline = MARGIN.top + plotHeight;
-  const top = niceMax(Math.max(...columns.map((c) => c.total)));
+  // Every column carries its amount above it: across when every label fits
+  // the column, up the column (rotated) when any doesn't. The scale leaves
+  // room above the tallest column for its label.
+  const valueText = (c: FlowColumn) => fmtCurrencyWhole(c.total);
+  const longestValue = Math.max(...columns.map((c) => valueText(c).length * VALUE_CHAR_WIDTH));
+  const across = longestValue <= step - 4;
+  const labelRoom = across ? 16 : longestValue + 8;
+  const top = niceMax((Math.max(...columns.map((c) => c.total)) * plotHeight) / (plotHeight - labelRoom));
   const scale = (v: number) => (Math.max(0, v) / top) * plotHeight;
   const ticks = [0, 0.25, 0.5, 0.75, 1].map((f) => f * top);
   const xOf = (i: number) => MARGIN.left + (hasBoth && i >= depositCount ? GROUP_GAP : 0) + i * step;
@@ -210,8 +223,11 @@ function Plot({ columns, plotHeight }: { columns: FlowColumn[]; plotHeight: numb
           {columns.map((c, i) => {
             const x = xOf(i) + (step - barWidth) / 2;
             const color = c.kind === "deposit" ? DEPOSIT : WITHDRAWAL;
-            const confirmedH = scale(c.confirmed);
-            const projectedH = c.confirmed > 0 ? scale(c.total) - confirmedH : scale(c.total);
+            const totalH = c.total > 0 ? Math.max(scale(c.total), MIN_BAR) : 0;
+            const confirmedH = totalH > 0 && c.confirmed > 0 ? totalH * Math.min(1, c.confirmed / c.total) : 0;
+            const projectedH = totalH - confirmedH;
+            const valueX = xOf(i) + step / 2;
+            const valueY = baseline - totalH - 5;
             // A 2px surface gap separates the confirmed and projected parts.
             const gap = confirmedH > 0 && projectedH > 2 ? 2 : 0;
             const labelX = xOf(i) + step / 2 + 3;
@@ -227,6 +243,19 @@ function Plot({ columns, plotHeight }: { columns: FlowColumn[]; plotHeight: numb
                 {projectedH - gap > 0 && (
                   <path d={topRoundedBar(x, baseline - confirmedH - projectedH, barWidth, projectedH - gap, 4)} fill={color} fillOpacity={PROJECTED_OPACITY} />
                 )}
+                <text
+                  data-value={c.label}
+                  x={across ? valueX : valueX + 3.5}
+                  y={valueY}
+                  fontSize={VALUE_FONT}
+                  fontFamily="var(--mono)"
+                  fontWeight={600}
+                  fill="var(--text)"
+                  textAnchor={across ? "middle" : "start"}
+                  transform={across ? undefined : `rotate(-90 ${valueX + 3.5} ${valueY})`}
+                >
+                  {valueText(c)}
+                </text>
                 <text
                   x={labelX}
                   y={labelY}

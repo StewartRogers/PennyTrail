@@ -647,6 +647,20 @@ describe("monthFlow", () => {
     }
   });
 
+  it("takes a recorded checkpoint's Weekly Spend from the balance, whatever the daily rate", () => {
+    // Start at 100, deposit 10, withdraw 20: 90 on paper. A recorded 75
+    // means 15 went on spending not listed as a withdrawal.
+    for (const dailySpendRate of [0, 50]) {
+      const m = month({ openingBalance: 100, dailySpendRate, periods: [{ id: "p", endDate: "2026-10-31", label: "End of month", actualBalance: 75 }] });
+      const entries = [
+        entry({ name: "Pay", kind: "deposit", expectedAmount: 10, postingDate: "2026-10-05", status: "actual" }),
+        entry({ name: "Bill", expectedAmount: 20, postingDate: "2026-10-06", status: "actual" }),
+      ];
+      const spend = monthFlow(summarizeMonth(m, entries)).columns.find((c) => c.isSpend);
+      expect([spend?.total, spend?.confirmed, spend?.projected]).toEqual([15, 15, 0]);
+    }
+  });
+
   it("sums in cents", () => {
     const m = month({ dailySpendRate: 0 });
     const entries = [entry({ name: "A (1)", expectedAmount: 0.1 }), entry({ name: "A (2)", expectedAmount: 0.2 })];

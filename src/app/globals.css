@@ -97,8 +97,11 @@ button {
   .cf-flow-inner {
     width: auto !important;
   }
+  /* Capped so the chart fits on page 1 under the tiles, whatever width
+     the screen laid it out at; the viewBox scales it to fit, centred. */
   .cf-flow-inner svg {
     width: 100%;
     height: auto;
+    max-height: 95mm;
   }
 }

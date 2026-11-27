@@ -82,7 +82,7 @@ function StartedChart({ appState, monthId, accountName }: { appState: AppState; 
 
       <div className="cf-print-block" style={{ display: "flex", gap: 16, marginBottom: 16, flexWrap: "wrap" }}>
         {tiles.map((t) => (
-          <Card key={t.label} style={{ flex: 1, minWidth: 180, padding: "18px 20px" }}>
+          <Card key={t.label} style={{ flex: 1, minWidth: 150, padding: "18px 20px" }}>
             <div style={{ fontSize: 12.5, color: "var(--muted)", marginBottom: 8 }}>{t.label}</div>
             <div data-testid={`tile-${t.label}`} style={{ fontFamily: "var(--mono)", fontSize: 23, fontWeight: 600, color: t.color }}>
               {fmtCurrency(t.value)}
